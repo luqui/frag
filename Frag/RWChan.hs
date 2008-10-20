@@ -1,4 +1,8 @@
-module Frag.RWChan where
+module Frag.RWChan 
+    ( RChan, newRChan, readRChan
+    , WChan, newWChan, writeWChan
+    )
+where
 
 import Data.IORef
 import Control.Concurrent.MVar
