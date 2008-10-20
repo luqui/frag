@@ -134,6 +134,28 @@ instance Monad Behavior where
 -- Event is semantically just Future.  We just allow an Eval binder.
 newtype Event a = Event { unEvent :: ComputationID -> Eval (Future a) }
 
+instance Functor Event where
+    fmap f (Event e) = Event (fmap (fmap (fmap f)) e)
+
+instance Monad Event where
+    return x = Event (return (return (return x)))
+    m >>= f = Event $ \compid -> do
+        futa <- unEvent m compid
+        futb <- unEvent (f (value futa)) compid
+        return $ makeFuture (max (time futa) (time futb)) (value futb)
+
+instance Applicative Event where
+    pure = return
+    (<*>) = ap
+        
+instance Monoid (Event a) where
+    mempty = Event (\_ -> return mempty)
+    mappend (Event a) (Event b) = Event (\compid -> liftM2 mappend (a compid) (b compid))
+
+instance MonadPlus Event where
+    mzero = mempty
+    mplus = mappend
+
 
 until :: Behavior a -> Event (Behavior a) -> Behavior a
 until b event = makeBehavior go
