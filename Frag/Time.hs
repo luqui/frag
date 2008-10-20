@@ -3,6 +3,8 @@ module Frag.Time where
 import qualified Data.IVar as IVar
 import Data.Time.Clock
 import Control.Applicative
+import System.IO.Unsafe (unsafePerformIO)
+import Data.Monoid
 
 data Time
     = Always
@@ -23,7 +25,7 @@ order f@(Future t x) f'@(Future t' x') = (lesser, greater)
             (Exact r, Exact r') -> unsafePerformIO . IVar.blocking $ do
                 a <- (Left <$> r) `mappend` (Right <$> r')
                 b <- (Right <$> r') `mappend` (Left <$> r)
-                case (a,b) of
+                return $ case (a,b) of
                     (Left x, Left _) -> (f,f')
                     (Right y, Right _) -> (f',f)
                     (Left x, Right y) -> merge x y
