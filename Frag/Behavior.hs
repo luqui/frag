@@ -62,7 +62,7 @@ synch lock action = do
 type PrimBehavior a = [Time] -> Eval [a]
     
 
-makeBehavior :: forall a. ([Time] -> Eval [a]) -> Behavior a
+makeBehavior :: forall a. (ComputationID -> [Time] -> Eval [a]) -> Behavior a
 -- this first unsafe is to allocate a unique ID to the lexical behavior (the QRef)
 makeBehavior f = unsafePerformIO $ do  
     ref <- QRef.newLeft
@@ -80,14 +80,14 @@ makeBehavior f = unsafePerformIO $ do
             case maybecache of
                 Just x -> return (return x)
                 Nothing -> do
-                    Eval reqs prim <- createEvalFunc
+                    Eval reqs prim <- createEvalFunc (ComputationID compid)
                     QRef.write ref compid prim
                     return (Eval reqs prim)
     
-    createEvalFunc :: IO (Eval (PrimBehavior a))
-    createEvalFunc = do
+    createEvalFunc :: ComputationID -> IO (Eval (PrimBehavior a))
+    createEvalFunc compid = do
         (times, timechan) <- newWChan
-        let Eval reqs as = f times
+        let Eval reqs as = f compid times
         valchan <- newRChan as
         return $ Eval reqs (timeFunc (writeWChan timechan) (fromJust <$> readRChan valchan))
 
@@ -130,3 +130,14 @@ instance Monad Behavior where
                 mb' <- runBehavior (f a) compid
                 mb' [t]
 
+
+until :: Behavior a -> Future (Behavior a) -> Behavior a
+until b fut = makeBehavior go
+    where
+    go compid times = do
+        let (pres,posts) = span (<= time fut) times
+        b' <- runBehavior b compid
+        prevals <- b' pres
+        f' <- runBehavior (value fut) compid
+        postvals <- f' posts
+        return $ prevals ++ postvals
