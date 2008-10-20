@@ -59,7 +59,7 @@ synch lock action = do
     putMVar lock ()
     return r
 
-type PrimBehavior a = Eval ([Time] -> Eval [a])
+type PrimBehavior a = [Time] -> Eval [a]
     
 
 makeBehavior :: forall a. ([Time] -> Eval [a]) -> Behavior a
@@ -78,13 +78,13 @@ makeBehavior f = unsafePerformIO $ do
         synch lock $ do
             maybecache <- QRef.read ref compid
             case maybecache of
-                Just x -> return x
+                Just x -> return (return x)
                 Nothing -> do
-                    prim <- createEvalFunc
+                    Eval reqs prim <- createEvalFunc
                     QRef.write ref compid prim
-                    return prim
+                    return (Eval reqs prim)
     
-    createEvalFunc :: IO (Eval ([Time] -> Eval [a]))
+    createEvalFunc :: IO (Eval (PrimBehavior a))
     createEvalFunc = do
         (times, timechan) <- newWChan
         let Eval reqs as = f times
