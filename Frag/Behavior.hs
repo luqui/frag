@@ -131,10 +131,15 @@ instance Monad Behavior where
                 mb' [t]
 
 
-until :: Behavior a -> Future (Behavior a) -> Behavior a
-until b fut = makeBehavior go
+-- Event is semantically just Future.  We just allow an Eval binder.
+newtype Event a = Event { unEvent :: ComputationID -> Eval (Future a) }
+
+
+until :: Behavior a -> Event (Behavior a) -> Behavior a
+until b event = makeBehavior go
     where
     go compid times = do
+        fut <- unEvent event compid
         let (pres,posts) = span (<= time fut) times
         b' <- runBehavior b compid
         prevals <- b' pres
@@ -145,3 +150,10 @@ until b fut = makeBehavior go
         f' <- runBehavior (value fut) compid
         postvals <- f' posts
         return $ prevals ++ postvals
+
+snapshot :: Behavior a -> Event b -> Event (a,b)
+snapshot b event = Event $ \compid -> do
+    fut <- unEvent event compid
+    b' <- runBehavior b compid
+    ~(v:_) <- b' [time fut]  -- the _ will be [], but we don't have the luxury to check
+    return $ makeFuture (time fut) (v,value fut)
