@@ -1,5 +1,6 @@
 module Frag.Behavior where
 
+import Prelude hiding (until)
 import Frag.Time
 import Frag.Kernel
 import Frag.RWChan
@@ -9,6 +10,7 @@ import Control.Applicative
 import Data.Maybe
 import Data.Monoid
 import System.IO.Unsafe (unsafePerformIO)
+import Control.Monad
 
 -- The monad in which we do all our computation, Eval.
 -- It is just a writer of Requests, where the monoid action
@@ -46,7 +48,8 @@ newtype ComputationID = ComputationID (forall a. QRef.RightRef a)
 -- In this implementation, it takes a computation ID to cache itself,
 -- a list of times at which to evaluate, and returns the list of values
 -- evaluated there.  
-newtype Behavior a = Behavior (ComputationID -> [Time] -> Eval [a])
+newtype Behavior a 
+    = Behavior { runBehavior :: ComputationID -> Eval ([Time] -> Eval [a]) }
 
 -- Synchronize a computation with a lock.
 synch :: MVar () -> IO a -> IO a
@@ -56,44 +59,78 @@ synch lock action = do
     putMVar lock ()
     return r
 
+type PrimBehavior a = Eval ([Time] -> Eval [a])
+    
 
-makeBehavior :: ([Time] -> [a]) -> Behavior a
+makeBehavior :: forall a. ([Time] -> Eval [a]) -> Behavior a
 -- this first unsafe is to allocate a unique ID to the lexical behavior (the QRef)
 makeBehavior f = unsafePerformIO $ do  
     ref <- QRef.newLeft
     lock <- newMVar ()
+    return (behavior ref lock)
+
+    where
+
+    behavior :: QRef.LeftRef (PrimBehavior a) -> MVar () -> Behavior a
     -- this second unsafe is to try to retrieve the behavior from the cache
     -- and allocate new channels if not.
-    return . Behavior $ \(ComputationID compid) -> unsafePerformIO $ do
+    behavior ref lock = Behavior $ \(ComputationID compid) -> unsafePerformIO $ do
         synch lock $ do
             maybecache <- QRef.read ref compid
             case maybecache of
                 Just x -> return x
                 Nothing -> do
-                    requestor <- allocateRequestor f
-                    QRef.write ref compid requestor
-                    return requestor
-    where
+                    prim <- createEvalFunc
+                    QRef.write ref compid prim
+                    return prim
+    
+    createEvalFunc :: IO (Eval ([Time] -> Eval [a]))
+    createEvalFunc = do
+        (times, timechan) <- newWChan
+        let Eval reqs as = f times
+        valchan <- newRChan as
+        return $ Eval reqs (timeFunc (writeWChan timechan) (fromJust <$> readRChan valchan))
 
-allocateRequestor :: ([Time] -> [a]) -> IO ([Time] -> Eval [a])
-allocateRequestor f = do
-    (times, timechan) <- newWChan
-    valchan <- newRChan (f times)
-
+    timeFunc :: Writer Time -> Reader a -> [Time] -> Eval [a]
     -- This third and final unsafe allocates a channel on which to 
     -- recieve the specific list of times given.
-    return $ \times -> unsafePerformIO $ do
+    timeFunc timechan valchan times = unsafePerformIO $ do
         (results, resultchan) <- newWChan
         let requests = for times $ makeRequest
-                                    (writeWChan timechan) 
-                                    (fromJust <$> readRChan valchan) 
-                                    (writeWChan resultchan)
+                                     timechan valchan (writeWChan resultchan)
         return $ Eval (RequestM requests) results
-    where
+    
     for = flip map
+
 
 -- Yow, that is some *unsafe* code!
 -- But it's all pure from here on out.
 
+{-
+instance Functor Behavior where
+    fmap f (Behavior b) = Behavior (\compid ts -> map f <$> b compid ts)
+
+instance Applicative Behavior where
+    pure x = Behavior (\_ ts -> return (map (const x) ts))
+    Behavior f <*> Behavior x = Behavior $ \compid ts ->
+        liftM2 (zipWith ($)) (f compid ts) (x compid ts)
+
+-- Oh my god, you have no idea how hard I have worked for this 
+-- instance.  w00t!
+instance Monad Behavior where
+    return = pure
+    Behavior m >>= f = Behavior $ \compid ts -> do
+        as <- m compid ts
+        bs <- forM (zip as ts) $ \(a,t) -> 
+            runBehavior (f a) compid [t]
+        return (concat bs)
 
 
+
+until :: Behavior a -> Future (Behavior a) -> Behavior a
+until b fut = makeBehavior go
+    where
+    go ts = 
+        let (pres,posts) = span (<= time fut) ts
+        in 
+-}
