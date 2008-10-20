@@ -1,6 +1,6 @@
 module Frag.Time 
     ( Time, KnownTime(..), occurrence, waitFor
-    , Future(time, value), order
+    , Future(time, value), makeFuture, order
     , sinkFuture
     )
 where
@@ -95,6 +95,9 @@ data Future a = Future {
         -- this might block until the value is known (but it is not guaranteed
         -- to block until the time, use waitFor if you want to be sure).
     }
+
+makeFuture :: Time -> a -> Future a
+makeFuture = Future
 
 instance Functor Future where
     fmap f (Future t x) = Future t (f x)
