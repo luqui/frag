@@ -25,7 +25,7 @@ runKernel :: [Request] -> IO ()
 runKernel = mapM_ value
 
 
-makeRequest :: Time -> Writer Time -> Reader a -> Writer a -> Request
-makeRequest t tsink r w = makeFuture t (tsink t >> r >>= w)
+makeRequest :: Writer Time -> Reader a -> Writer a -> Time -> Request
+makeRequest tsink r w t = makeFuture t (tsink t >> r >>= w)
 
 
