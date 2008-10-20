@@ -106,31 +106,27 @@ makeBehavior f = unsafePerformIO $ do
 -- Yow, that is some *unsafe* code!
 -- But it's all pure from here on out.
 
-{-
 instance Functor Behavior where
-    fmap f (Behavior b) = Behavior (\compid ts -> map f <$> b compid ts)
+    -- LOL
+    fmap f (Behavior b) = Behavior (fmap (fmap (fmap (fmap (fmap f)))) b)
 
 instance Applicative Behavior where
-    pure x = Behavior (\_ ts -> return (map (const x) ts))
-    Behavior f <*> Behavior x = Behavior $ \compid ts ->
-        liftM2 (zipWith ($)) (f compid ts) (x compid ts)
+    pure x = Behavior (\_ -> return (\times -> return (map (const x) times)))
+    f <*> x = Behavior $ \compid -> do
+        f' <- runBehavior f compid
+        x' <- runBehavior x compid
+        return $ liftA2 (liftM2 (zipWith ($))) f' x'
 
--- Oh my god, you have no idea how hard I have worked for this 
--- instance.  w00t!
+-- Okay, it's not the prettiest thing in the world,
+-- but you have no idea how hard I have worked to make this
+-- instance even feasible! w00t!!!
 instance Monad Behavior where
     return = pure
-    Behavior m >>= f = Behavior $ \compid ts -> do
-        as <- m compid ts
-        bs <- forM (zip as ts) $ \(a,t) -> 
-            runBehavior (f a) compid [t]
-        return (concat bs)
+    m >>= f = Behavior $ \compid -> do
+        m' <- runBehavior m compid
+        return $ \times -> do
+            as <- m' times
+            fmap concat . forM (zip as times) $ \(a,t) -> do
+                mb' <- runBehavior (f a) compid
+                mb' [t]
 
-
-
-until :: Behavior a -> Future (Behavior a) -> Behavior a
-until b fut = makeBehavior go
-    where
-    go ts = 
-        let (pres,posts) = span (<= time fut) ts
-        in 
--}
