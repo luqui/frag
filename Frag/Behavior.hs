@@ -138,6 +138,10 @@ until b fut = makeBehavior go
         let (pres,posts) = span (<= time fut) times
         b' <- runBehavior b compid
         prevals <- b' pres
+        -- is this lazy enough?  We might have to explicitly
+        -- (no-op) shift all the results to be after time fut,
+        -- just so that merging doesn't try to evaluate value
+        -- fut before it can.
         f' <- runBehavior (value fut) compid
         postvals <- f' posts
         return $ prevals ++ postvals
