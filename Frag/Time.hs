@@ -87,7 +87,14 @@ instance Ord Time where
             (Left x, Right y)  -> compare x y
             (Right y, Left x)  -> compare y x
 
-data Future a = Future { time :: Time, value :: a }
+data Future a = Future {
+        time :: Time, 
+        -- ^ The time a future occurred.
+        value :: a 
+        -- ^ The value of the occurrence.  If the future is in the future,
+        -- this might block until the value is known (but it is not guaranteed
+        -- to block until the time, use waitFor if you want to be sure).
+    }
 
 instance Functor Future where
     fmap f (Future t x) = Future t (f x)
