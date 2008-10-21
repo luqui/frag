@@ -11,6 +11,9 @@ import Data.Maybe
 import Data.Monoid
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad
+-- unsafeCoerce for the CompuationID minihack
+import Unsafe.Coerce
+
 
 -- The monad in which we do all our computation, Eval.
 -- It is just a writer of Requests, where the monoid action
@@ -156,6 +159,8 @@ instance MonadPlus Event where
     mzero = mempty
     mplus = mappend
 
+futureToEvent :: Future a -> Event a
+futureToEvent = Event . const . return
 
 until :: Behavior a -> Event (Behavior a) -> Behavior a
 until b event = makeBehavior go
@@ -179,3 +184,13 @@ snapshot b event = Event $ \compid -> do
     b' <- runBehavior b compid
     ~(v:_) <- b' [time fut]  -- the _ will be [], but we don't have the luxury to check
     return $ makeFuture (time fut) (v,value fut)
+
+
+evalBehavior :: Behavior a -> [Time] -> IO (IO (), [a])
+evalBehavior beh times = do
+    -- coerce into a polymorphic value
+    compid <- ComputationID <$> unsafeCoerce QRef.newRight
+    let Eval reqs beh' = runBehavior beh compid
+    let Eval reqs' as  = beh' times
+    let RequestM rs = reqs `mappend` reqs'
+    return (runKernel rs, as)
