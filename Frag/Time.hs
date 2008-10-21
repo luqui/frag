@@ -1,5 +1,5 @@
 module Frag.Time 
-    ( Time, KnownTime(..), occurrence, waitFor
+    ( Time, KnownTime(..), occurrence, waitFor, exact
     , Future(time, value), makeFuture, order
     , sinkFuture
     )
@@ -31,6 +31,8 @@ data KnownTime
 -- becomes defined), and the time extracted by the reader must never be before
 -- the reader becomes defined.
 
+exact :: UTCTime -> Time
+exact = Exact . return
 
 -- | If the time has occurred yet, returns the time, otherwise returns Nothing.
 -- In the case that the time is negative infinity, 
