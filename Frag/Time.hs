@@ -1,5 +1,5 @@
 module Frag.Time 
-    ( Time, KnownTime(..), occurrence, waitFor, exact
+    ( Time, KnownTime(..), occurrence, waitFor, exact, addTime
     , Future(time, value), makeFuture, order
     , sinkFuture
     )
@@ -33,6 +33,9 @@ data KnownTime
 
 exact :: UTCTime -> Time
 exact = Exact . return
+
+addTime :: NominalDiffTime -> Time -> Time
+addTime diff (Exact v) = Exact $ addUTCTime diff <$> v
 
 -- | If the time has occurred yet, returns the time, otherwise returns Nothing.
 -- In the case that the time is negative infinity, 

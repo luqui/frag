@@ -12,7 +12,6 @@ type Reader a = IO a
 
 type Request = Future (IO ())
 
-
 mergeRequests :: [Request] -> [Request] -> [Request]
 mergeRequests [] bs = bs
 mergeRequests as [] = as

@@ -23,6 +23,7 @@ import Control.Monad
 import Control.Monad.Fix
 -- unsafeCoerce for the CompuationID minihack
 import Unsafe.Coerce
+import Debug.Trace
 
 
 -- The monad in which we do all our computation, Eval.
