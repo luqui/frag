@@ -4,6 +4,7 @@ module Frag.Behavior
     , futureToEvent
     , until
     , snapshot
+    , monotoneTrans0, monotoneTrans1, monotoneTrans2
     , evalBehavior
     )
 where
@@ -19,6 +20,7 @@ import Data.Maybe
 import Data.Monoid
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad
+import Control.Monad.Fix
 -- unsafeCoerce for the CompuationID minihack
 import Unsafe.Coerce
 
@@ -46,6 +48,8 @@ instance Monad Eval where
     -- Can we get away with making this lazier?
     Eval rs a >>= f = let Eval rs' b = f a in Eval (rs `mappend` rs') b
 
+instance MonadFix Eval where
+    mfix f = let e@(Eval rs a) = f a in e
 
 -- Semantically, ComputationIDs are just unit, they mean nothing.  But
 -- in the implementation, they separate different sets of incoming
@@ -193,6 +197,26 @@ snapshot b event = Event $ \compid -> do
     ~(v:_) <- b' [time fut]  -- the _ will be [], but we don't have the luxury to check
     return $ makeFuture (time fut) (v,value fut)
 
+
+-- I can't come up with a regular scheme for these things.
+monotoneTrans0 :: ([Time] -> [a]) -> Behavior a
+monotoneTrans0 f = makeBehavior (\_ ts -> return (f ts))
+
+monotoneTrans1 :: ([b] -> [Time] -> ([Time], [a])) -> Behavior b -> Behavior a
+monotoneTrans1 f b = makeBehavior $ \compid ts -> do
+    b' <- runBehavior b compid
+    mdo let (breqs, as) = f bs ts
+        bs <- b' breqs
+        return as
+
+monotoneTrans2 :: ([b] -> [c] -> [Time] -> ([Time], [Time], [a])) -> Behavior b -> Behavior c -> Behavior a
+monotoneTrans2 f b c = makeBehavior $ \compid ts -> do
+    b' <- runBehavior b compid
+    c' <- runBehavior c compid
+    mdo let (breqs, creqs, as) = f bs cs ts
+        bs <- b' breqs
+        cs <- c' creqs
+        return as
 
 evalBehavior :: Behavior a -> [Time] -> IO (IO (), [a])
 evalBehavior beh times = do
