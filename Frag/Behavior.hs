@@ -28,18 +28,12 @@ import Debug.Trace
 
 -- The monad in which we do all our computation, Eval.
 -- It is just a writer of Requests, where the monoid action
--- on requests is to merge rather than append.
-
-newtype RequestM = RequestM [Request]
-
-instance Monoid RequestM where
-    mempty = RequestM []
-    mappend (RequestM xs) (RequestM ys) = RequestM (mergeRequests xs ys)
+-- on requests is to merge.
 
 -- Semantically, Eval is the identity monad.  In the implementation,
 -- it is responsible for taking all the requests made in a computation
 -- and making sure they get to the top so they can be satisfied.
-data Eval a = Eval RequestM a
+data Eval a = Eval RequestStream a
 
 instance Functor Eval where
     fmap f (Eval rs x) = Eval rs (f x)
@@ -112,9 +106,8 @@ makeBehavior f = unsafePerformIO $ do
     -- recieve the specific list of times given.
     timeFunc timechan valchan times = unsafePerformIO $ do
         (results, resultchan) <- newWChan
-        let requests = for times $ makeRequest
-                                     timechan valchan (writeWChan resultchan)
-        return $ Eval (RequestM requests) results
+        let requests = monotoneRequests timechan valchan (writeWChan resultchan) times
+        return $ Eval requests results
     
     for = flip map
 
@@ -225,5 +218,4 @@ evalBehavior beh times = do
     compid <- ComputationID <$> unsafeCoerce QRef.newRight
     let Eval reqs beh' = runBehavior beh compid
     let Eval reqs' as  = beh' times
-    let RequestM rs = reqs `mappend` reqs'
-    return (runKernel rs, as)
+    return (runKernel (reqs `mappend` reqs'), as)

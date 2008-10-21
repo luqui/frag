@@ -1,7 +1,7 @@
 module Frag.Time 
     ( Time, KnownTime(..), occurrence, waitFor, exact, addTime
-    , Future(time, value), makeFuture, order
-    , sinkFuture
+    , Future(time, value), makeFuture, order, order'
+    , sinkFuture, waitFuture
     )
 where
 
@@ -10,7 +10,7 @@ import Data.Time.Clock
 import Control.Applicative
 import System.IO.Unsafe (unsafePerformIO, unsafeInterleaveIO)
 import Data.Monoid (Monoid(..))
-import Control.Monad (ap, MonadPlus(..), forever)
+import Control.Monad (ap, MonadPlus(..), forever, join)
 import Control.Concurrent (threadDelay)
 
 -- | Represents a real-world, acutal time (in an arbitrary fixed inertial
@@ -90,7 +90,34 @@ instance Ord Time where
             (Left x, Left _)   -> LT
             (Right y, Right _) -> GT
             (Left x, Right y)  -> compare x y
-            (Right y, Left x)  -> compare y x
+            (Right y, Left x)  -> compare x y
+
+    
+    min Always _ = Always
+    min _ Always = Always
+    min Never y  = y
+    min x Never  = x
+    min (Exact r) (Exact r') = Exact $ do
+        a <- (Left <$> r) `mappend` (Right <$> r')
+        b <- (Right <$> r') `mappend` (Left <$> r)
+        return $ case (a,b) of
+            (Left x, Left _)   -> x
+            (Right y, Right _) -> y
+            (Left x, Right y)  -> min x y
+            (Right y, Left x)  -> min x y
+    
+    max Always y = y
+    max x Always = x
+    max Never y  = Never
+    max x Never  = Never
+    max (Exact r) (Exact r') = Exact . join $ do
+        a <- (Left <$> r) `mappend` (Right <$> r')
+        b <- (Right <$> r') `mappend` (Left <$> r)
+        return $ case (a,b) of
+            (Left x, Left _)   -> r'
+            (Right y, Right _) -> r
+            (Left x, Right y)  -> return $ max x y
+            (Right y, Left x)  -> return $ max x y
 
 data Future a = Future {
         time :: Time, 
@@ -128,10 +155,15 @@ instance MonadPlus Future where
 -- | @order a b@ returns the a tuple whose first element is whichever of @a@,
 -- @b@ that occurs first, and its second element is the other one.
 order :: Future a -> Future a -> (Future a, Future a)
-order f@(Future t x) f'@(Future t' x') = (lesser, greater)
+order f@(Future t x) f'@(Future t' x') = (Future (min t t') lesser, Future (max t t') greater)
     where
-    (lesser,greater) | t <= t'   = (f,f')
-                     | otherwise = (f',f)
+    (lesser,greater) | t <= t'   = (x,x')
+                     | otherwise = (x',x)
+
+order' :: Future a -> Future a -> Future (a, Future a)
+order' f f' = fmap (\x -> (x,g)) l
+    where
+    (l,g) = order f f'
 
 -- | Create a future and a sink.  The future becomes defined at the first time
 -- the sink is called.  If the sink is called more than once, it throws an
@@ -145,3 +177,8 @@ sinkFuture = do
     let rd = IVar.read var
     x <- unsafeInterleaveIO . IVar.blocking $ snd <$> rd
     return $ (Future (Exact $ fst <$> rd) x, sink)
+
+waitFuture :: Future a -> IO a
+waitFuture (Future time value) = do
+    waitFor time
+    return value
