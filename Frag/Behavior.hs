@@ -1,4 +1,12 @@
-module Frag.Behavior where
+module Frag.Behavior 
+    ( Behavior
+    , Event
+    , futureToEvent
+    , until
+    , snapshot
+    , evalBehavior
+    )
+where
 
 import Prelude hiding (until)
 import Frag.Time
