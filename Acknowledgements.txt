@@ -1,0 +1,1 @@
+Many thanks to Jamie Brandon for ideas about lazy data structures.
