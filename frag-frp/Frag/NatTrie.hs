@@ -25,7 +25,8 @@ uniform :: a -> NatTrie a
 uniform x = let r = NatTrie x r r in r
 
 operate :: Integer -> (a -> a) -> NatTrie a -> (a, NatTrie a)
-operate 0 f ~(NatTrie x l r) = (x, NatTrie (f x) l r)
+operate 0 f ~(NatTrie x l r) = let fx = f x in fx `seq` (x, NatTrie fx l r)
+-- I think this strictness is necessary for GC,    ^^^   but it's something to play with.
 operate n f ~(NatTrie x l r)
     | rem == 0   = let (x', l') = operate quot f l in (x', NatTrie x l' r)
     | otherwise  = let (x', r') = operate quot f r in (x', NatTrie x l r')
