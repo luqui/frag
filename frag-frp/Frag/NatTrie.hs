@@ -4,6 +4,7 @@ where
 
 import Control.Applicative
 import Prelude hiding (lookup)
+import Data.Monoid
 
 data NatTrie a
     = NatTrie a (NatTrie a) (NatTrie a)
@@ -15,6 +16,10 @@ instance Applicative NatTrie where
     pure = uniform
     NatTrie f fl fr <*> NatTrie x xl xr 
         = NatTrie (f x) (fl <*> xl) (fr <*> xr)
+
+instance (Monoid m) => Monoid (NatTrie m) where
+    mempty = pure mempty
+    mappend = liftA2 mappend
 
 uniform :: a -> NatTrie a
 uniform x = let r = NatTrie x r r in r
