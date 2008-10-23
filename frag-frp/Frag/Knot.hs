@@ -24,6 +24,13 @@ prop_mergeUnmerge_inverses xs ys =
     where
     types = xs :: [Integer]
 
+prop_mergeUnmerge_assoc xs ys zs =
+    merge (merge xs ys) zs == merge xs (merge ys zs)
+    where
+    merge a b = fst (mergeUnmerge a b)
+    types = xs :: [Integer]
+
+
 
 newtype Knot req resp a = Knot { unKnot :: ([req], [resp]) -> (([req],[resp]), a) }
 
@@ -37,8 +44,8 @@ instance (Ord req, Ord resp) => Monad (Knot req resp) where
             ((reqf,respf),b) = unKnot (f a) (infreq,infresp)
             (reqMerged,  reqUnmerge  :: Unmerger) = mergeUnmerge reqm  reqf
             (respMerged, respUnmerge :: Unmerger) = mergeUnmerge respm respf
-            (inmreq,  infreq)  = respUnmerge req
-            (inmresp, infresp) = respUnmerge resp
+            (inmreq,  infreq)  = respUnmerge req     -- note the crossover here
+            (inmresp, infresp) = reqUnmerge resp     -- and here
         in ((reqMerged, respMerged), b)
 
 runKnot :: Knot req resp a -> a
