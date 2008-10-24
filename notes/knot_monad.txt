@@ -1,0 +1,33 @@
+I'm guessing that the whole thing can be built on what I'm calling a
+"Knot monad".  However, I'm not quite sure how to build it.  It supports
+only the following two functions:
+
+    runKnot :: (forall r. Knot r a) -> a
+    collect :: ([a] -> Knot r [b]) -> Knot r (a -> Knot r b)
+
+Where collect f  returns an action, which, each time it is invoked,
+passes its argument to f and reads the corresponding result.
+
+r is, of course, a region variable, since collect talks about global
+properties of a computation.
+
+What this means more precisely is yet to be determined.
+
+I think it's something like making the entire computation a big
+recursive let.  Since it involves the rest of the computation, it's
+probably related to CPS.
+
+    do f <- collect $ \[a,b] -> return [x a, y b]
+       i <- f 0
+       j <- f 1
+
+Becomes:
+
+    let f [a,b] = [x a, y b]
+        [i,j] = f [0,1]
+
+Since this is recursive, it's a big fixpoint.  And we probably can't get
+it static because of the lists.  So it's a fix of a dictionary?
+
+Hmm, but that gets ugly and very dynamic (read: unsafeCoerce everywhere)
+pretty quickly.  How static can we make it?
