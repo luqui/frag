@@ -160,6 +160,9 @@ order f@(Future t x) f'@(Future t' x') = (Future (min t t') lesser, Future (max 
     (lesser,greater) | t <= t'   = (x,x')
                      | otherwise = (x',x)
 
+-- | Another form of order.  This one probably admits a more efficient
+-- implementation than the others (but isn't currently implemented
+-- that way).
 order' :: Future a -> Future a -> Future (a, Future a)
 order' f f' = fmap (\x -> (x,g)) l
     where

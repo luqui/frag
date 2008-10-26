@@ -6,6 +6,7 @@ import Control.Monad.ST.Lazy
 import Frag.Time
 import Control.Applicative
 import Control.Monad
+import Data.Monoid
 
 -- Event is a "future computation"
 
@@ -29,6 +30,19 @@ instance Monad (Event r) where
 instance Applicative (Event r) where
     pure = return
     (<*>) = ap
+
+instance Monoid (Event r a) where
+    mempty = Event mempty
+    Event a `mappend` Event b = Event $ fmap go (order' a b)
+        where
+        go (Exact x, _)      = Exact x
+        go (Next step, late) = Next $ do
+            s <- step 
+            return $ s `mappend` Event late
+
+instance MonadPlus (Event r) where
+    mzero = mempty
+    mplus = mappend
 
 future :: Future a -> Event r a
 future = Event . fmap Exact
