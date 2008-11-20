@@ -1,0 +1,57 @@
+The Fran semantics are unattainable using a request-based implementation
+as in the sketch.  The reason is, say you have a Behavior b and Behavior
+c = integral b t0.  Then at some time t > t0, you request an element of
+b, and at some time t' > t you request an element of c.  It is not
+possible to make a monotone ordering of requests to b, since we don't
+know whether we will end up needing to reference c until we actually do.
+
+Properly doing the request implementation in this case would require a
+pessimistic evaluation of the integral samples, even if the integral is
+never evaluated.  In order to stop the samples, we would require a weak
+reference to detect when the integral is not needed anymore.
+
+In other words, we are hardly doing better than an eager implementation.
+
+So!  I am taking Frag in a new direction.  Fregl was great, and I loved
+programming in it, but it had performance problems.  I always attributed
+this to the unpredictability of weak references and the eagerness of the
+implementation, doing too much work.
+
+However, I realized (while lying in bed last night -- where all great
+minds ponder) that, while this may be true, Fregl had many performance
+stupidities not related to its eagerness.  Any event was a filter over
+*all* events, so there was a great lot of checking and discarding going
+on.  Every timestep was an event, so because of this checking,
+performance could never be better than linear in the number of objects
+alive, per frame.
+
+If we changed the event monad from:
+
+    data Event a where
+        Return :: a -> Event a
+        Suspend :: (EventVal -> Event a) -> Event a
+
+To:
+
+    data Event a where
+        Return :: a -> Event a
+        Suspend :: Future b -> ((Time,b) -> Event a) -> Event a
+
+And then did a temporal merge on the recieved Futures, we achieve an
+event-based implementation rather than a polling one, and we probably
+save on a great deal of event processing.
+
+Further, we can use Conal Elliott's "reactive normal form" for
+behaviors, i.e. instead of:
+
+    Behavior a = a `Until` Event (Behavior a)
+
+We use:
+
+    Behavior a = (Time -> a) `Until` Event (Behavior a)
+
+Then we eliminate all timestep events (except for the timesteps needed
+for integration and "when").
+
+I think these two changes could dramatically improve the performance of
+Fregl, and Fregl was good enough for GUIs to begin with.
