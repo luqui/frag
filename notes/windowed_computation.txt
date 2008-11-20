@@ -1,0 +1,25 @@
+The basis for the new direction is a "windowed computation" idea.
+Windowed computation is a computation that works over a linked series of
+chunks, with references that can update between chunks.  A key idea is
+that computation in a previous window cannot be affected by computation
+in a later window, but computations within a single window may be
+arbitrarily inter-referential.
+
+Here's an interface mock-up:
+
+    data Win s a deriving (Functor, Applicative, Monad)
+    data WRef s a deriving (Functor, Applicative)
+
+    -- takes an initial value (for this window) and
+    -- a function which computes the value for the 
+    -- next window (inside the previous one)
+    newWRef :: a -> (a -> Win s a) -> Win s (WRef s a)
+    readWRef :: WRef s a -> Win s a
+
+And now we need a way to run it.  I'm thinking something like:
+
+    runWin :: (forall s. a -> Win s b) -> (a -> IO b)
+    runWin :: (forall s. a -> Win s b) -> (a -> ST t b)
+
+Where the returned computation returns the value and moves to the next
+window.
