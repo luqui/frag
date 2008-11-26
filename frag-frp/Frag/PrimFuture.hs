@@ -1,6 +1,6 @@
 module Frag.PrimFuture
-    ( Time, PrimFuture, FutureMap
-    , newFutureMap
+    ( Time, PrimFuture, PrimFutureMap
+    , newPrimFutureMap
     , warn, now
     , newPrimFuture, activatePrimFuture, newPrimFutureThread
     , addListener, listen
@@ -27,16 +27,16 @@ newtype Time = Time UTCTime
 
 data PrimFuture a = PrimFuture { pfIdent :: Unique }
 
-data FutureMap r = FutureMap {
+data PrimFutureMap r = PrimFutureMap {
         fmMap  :: TVar (Map.Map Unique GHC.Prim.Any),
         fmChan :: TChan (Time, r)
     }
 
-newFutureMap :: IO (FutureMap r)
-newFutureMap = atomically $ do
+newPrimFutureMap :: IO (PrimFutureMap r)
+newPrimFutureMap = atomically $ do
     mp <- newTVar Map.empty
     chan <- newTChan
-    return $ FutureMap { fmMap = mp, fmChan = chan }
+    return $ PrimFutureMap { fmMap = mp, fmChan = chan }
 
 warn :: String -> IO ()
 warn = hPutStrLn stderr
@@ -49,14 +49,14 @@ modifyTVar tv f = do
     val <- readTVar tv
     writeTVar tv (f val)
 
-newPrimFuture :: FutureMap r -> IO (PrimFuture a)
+newPrimFuture :: PrimFutureMap r -> IO (PrimFuture a)
 newPrimFuture fm = do
     ident <- newUnique
     let pfut = PrimFuture ident
     addFinalizer pfut . atomically $ modifyTVar (fmMap fm) (Map.delete ident)
     return pfut
 
-activatePrimFuture :: FutureMap r -> PrimFuture a -> a -> IO ()
+activatePrimFuture :: PrimFutureMap r -> PrimFuture a -> a -> IO ()
 activatePrimFuture fm pf x = do
     elem <- atomically $ do
         mp <- readTVar (fmMap fm)
@@ -68,9 +68,9 @@ activatePrimFuture fm pf x = do
             return ()
         Just f -> atomically $ do
             t <- unsafeIOToSTM now
-            writeTChan (fmChan fm) $ (t, unsafeCoerce f x)
+            writeTChan (fmChan fm) (t, unsafeCoerce f x)
 
-newPrimFutureThread :: FutureMap r -> IO a -> IO (PrimFuture a)
+newPrimFutureThread :: PrimFutureMap r -> IO a -> IO (PrimFuture a)
 newPrimFutureThread fm thread = do
     pf <- newPrimFuture fm
     threadidvar <- newEmptyMVar
@@ -84,7 +84,7 @@ newPrimFutureThread fm thread = do
     return pf
         
 
-addListener :: (Monoid r) => FutureMap r -> PrimFuture a -> (a -> r) -> IO ()
+addListener :: (Monoid r) => PrimFutureMap r -> PrimFuture a -> (a -> r) -> IO ()
 addListener fm pf transform = atomically $ do
     mp <- readTVar (fmMap fm)
     let newentry = case Map.lookup (pfIdent pf) mp of
@@ -92,5 +92,5 @@ addListener fm pf transform = atomically $ do
                         Just t' -> liftM2 mappend (unsafeCoerce t') transform
     writeTVar (fmMap fm) (Map.insert (pfIdent pf) (unsafeCoerce newentry) mp)
 
-listen :: FutureMap r -> STM (Time, r)
+listen :: PrimFutureMap r -> STM (Time, r)
 listen fm = readTChan (fmChan fm)
