@@ -1,0 +1,51 @@
+Okay, now that we know we are doing an eager variation, what is our
+representation?  I've considered:
+
+    Behavior a = IO a            -- a poll function
+    Behavior a = Time -> IO a    -- a precise poll function
+    Behavior a = (IO a) x (IO a) -- a poll function and a wait function
+
+Among more complicated ones.  I don't know which would be best.  The
+main goal is Precision: for pure behaviors, it should be absolutely
+precise and deterministic -- the scheduler and timing of actions isn't
+allowed to interfere.
+
+When we bind integral b >>= \b' -> f b', we could start a thread that
+watches b (I am not discussing the weakref magic that I will inevitably
+have to do).  The challenge is to make queries to b' precise in this
+case.  
+
+The integral is known for intervals around its sample rate.  So perhaps
+it keeps track of this interval, and if it is queried for a time after
+this, it blocks until the follower thread reveals that information.
+
+This is begging the second representation: Behavior a = Time -> IO a.
+For efficiency, this has to come with some constraint on the call
+pattern, typically increasing Times.  That would be hard to enforce if
+there are different threads querying them.
+
+Instead, maybe a window constraint would be better.  So there is some
+interval of Times in which unrestricted queries can be made.  How do we
+make sure follower threads don't fall behind the current window.  Well,
+as I discussed in windowed_computation, maybe windows are "closed", and
+at that point we wait for everything to catch up.
+
+I don't really like the formalization in windowed_computation.  I don't
+know why, it just feels wrong.
+
+Okay, another direction I considered was using Futures to guide the
+update process: that way queries are forced to be monotone, since the
+futures are sorted.  I can't figure out a good way to exploit
+concurrency in this model though.
+
+Let's explore this direction a bit.  A reactive is a variable and an
+update, very similar to:  Reactive a = a x Future (Reactive a), but
+using mutable variables instead.  The question is: when you bind an
+integral, how is the fact that this new variable needs to be updated
+communicated?
+
+I guess an effectful set would be fine.  A simple constructor could be:
+
+    newSwitchVar :: a -> Future a -> IO (SwitchVar a)
+
+Fuck it, I just want to hack.
