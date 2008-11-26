@@ -1,5 +1,6 @@
 module Frag.PrimFuture
     ( Time, PrimFuture, FutureMap
+    , newFutureMap
     , warn, now
     , newPrimFuture, activatePrimFuture, newPrimFutureThread
     , addListener, listen
@@ -30,6 +31,12 @@ data FutureMap r = FutureMap {
         fmMap  :: TVar (Map.Map Unique GHC.Prim.Any),
         fmChan :: TChan (Time, r)
     }
+
+newFutureMap :: IO (FutureMap r)
+newFutureMap = atomically $ do
+    mp <- newTVar Map.empty
+    chan <- newTChan
+    return $ FutureMap { fmMap = mp, fmChan = chan }
 
 warn :: String -> IO ()
 warn = hPutStrLn stderr
