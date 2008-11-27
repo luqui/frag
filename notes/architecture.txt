@@ -1,0 +1,55 @@
+Yay!  I think I know how I'm going to do it.
+
+I use IO here, with the understanding that it can probably be
+specialized to ST or something. 
+
+Behaviors are built on Reactive Normal Form from Reactives, as in the
+reactive library.  Reactives are built using SwitchVars, which are
+similar to Fregl's cells.  A SwitchVar is a mutable variable with two
+states: Early and Late.  In the Early state, it is like any mutable
+variable.  But it may transition to the Late state, in which it is
+guaranteed not to change anymore.  This allows gradual access
+optimizations for certain patterns.
+
+Interface for SwitchVars:
+
+    new :: a -> Future a -> IO (SwitchVar a)
+    read :: SwitchVar a -> IO (a, Maybe (SwitchVar a))
+    Applicative
+
+read returns the current value of the variable, together with possibly
+an optimized version of itself.  The Maybe is to avoid needless rewrites
+of the same thing.
+
+There is also a Monad instance which does not optimially optimize
+itself.  We'll play with that.
+
+newSwitchVar registers the given Future in a list of callbacks (see
+PrimFutureHeap below), with a weak reference to the SwitchVar so it can
+remove itself.  The callback updates the SwitchVar to the late state
+with the new value.
+
+Futures are built using a coroutine monad over PrimFutures.  A
+PrimFuture is a very limited version of a Future.  Interface:
+
+    new :: IO (PrimFuture a, a -> IO ())
+    exact :: Time -> a -> PrimFuture a
+    Functor, Monoid
+
+And a mutable PrimFutureHeap which supports:
+
+    new :: IO (PrimFutureHeap a)
+    take :: PrimFutureHeap a -> IO (Time,a)
+    insert :: PrimFutureHeap a -> PrimFuture a -> IO ()
+
+Future is then:
+
+    newtype Future a = Future (IO (Suspend a))
+    data Suspend a where
+        Return  :: Time -> a -> Suspend a
+        Suspend :: PrimFuture b -> (b -> Future a) -> Suspend a
+    Monoid, Monad
+
+The IO here is necessary so that Futures can snapshot SwitchVars.
+
+And that should do it.
