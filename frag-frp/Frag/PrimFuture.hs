@@ -1,96 +1,130 @@
-module Frag.PrimFuture
-    ( Time, PrimFuture, PrimFutureMap
-    , newPrimFutureMap
-    , warn, now
-    , newPrimFuture, activatePrimFuture, newPrimFutureThread
-    , addListener, listen
-    )
-where
+module Frag.PrimFuture where
 
-import System.Mem.Weak
-import Data.Time.Clock
 import Data.Unique
-import qualified GHC.Prim
 import qualified Data.Map as Map
-import GHC.Conc (unsafeIOToSTM)
+import qualified Data.Set as Set
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
-import Control.Concurrent.MVar
-import Control.Monad (liftM2)
-import Data.Monoid (Monoid, mappend)
+import GHC.Conc (unsafeIOToSTM)
+import Data.Time.Clock
 import Unsafe.Coerce
-import System.IO
+import qualified GHC.Prim
+import Data.Maybe
+import Control.Monad (unless)
+import Control.Arrow ((>>>))
+import Data.Monoid (Monoid, mempty, mappend, mconcat)
+import Control.Monad.Fix
 
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
 
-data PrimFuture a = PrimFuture { pfIdent :: Unique }
+data PrimFuture a where
+    Ident   :: FutureID -> PrimFuture a
+    Exact   :: Time -> a -> PrimFuture a
+    FMap    :: (a -> b) -> PrimFuture a -> PrimFuture b
+    MConcat :: [PrimFuture a] -> PrimFuture a
 
-data PrimFutureMap r = PrimFutureMap {
-        fmMap  :: TVar (Map.Map Unique GHC.Prim.Any),
-        fmChan :: TChan (Time, r)
-    }
+instance Functor PrimFuture where
+    fmap = FMap
 
-newPrimFutureMap :: IO (PrimFutureMap r)
-newPrimFutureMap = atomically $ do
-    mp <- newTVar Map.empty
-    chan <- newTChan
-    return $ PrimFutureMap { fmMap = mp, fmChan = chan }
+instance Monoid (PrimFuture a) where
+    mempty = MConcat []
+    mappend a b = MConcat [a,b]
+    mconcat = MConcat
 
-warn :: String -> IO ()
-warn = hPutStrLn stderr
+type FutureID = Unique   -- ID for a sink-generated future
+type CallbackID = Unique -- ID for a callback which generates a single result
 
-now :: IO Time
-now = fmap Time getCurrentTime
+data FHeap a = FHeap {
+    -- map futures to callbacks which depend on them
+    fhToCallback :: Map.Map FutureID [CallbackID],
+    -- map callbacks to generators of results, together with 
+    -- related callbacks (which should be removed)
+    fhCallbacks  :: Map.Map CallbackID (GHC.Prim.Any -> a, [CallbackID])
+}
+
+insertCallback :: CallbackID -> (GHC.Prim.Any -> a) -> [CallbackID] -> FHeap a -> FHeap a
+insertCallback cbid cb related fheap = 
+    fheap { fhCallbacks = Map.insert cbid (cb, related) (fhCallbacks fheap) }
+
+insertAssoc :: FutureID -> CallbackID -> FHeap a -> FHeap a
+insertAssoc fid cbid fheap = 
+    fheap { fhToCallback = Map.insertWith (++) fid [cbid] (fhToCallback fheap) }
+
+callbackFHeap :: GHC.Prim.Any -> [CallbackID] -> FHeap a -> (FHeap a, [a])
+callbackFHeap futdata callbacks fheap = 
+    (fheap { fhCallbacks = callbacks' }, results)
+    where
+    (generators, related) = unzip [ (gen, rs) 
+                                  | cbid <- callbacks
+                                  , Just (gen,rs) <- return $ Map.lookup cbid (fhCallbacks fheap) ]
+    callbacks' = Map.difference (fhCallbacks fheap) 
+                                (Map.fromList [ (k,()) | k <- concat related ])
+    results = map ($ futdata) generators
+    
+
+activateFHeap :: FutureID -> GHC.Prim.Any -> FHeap a -> (FHeap a, [a])
+activateFHeap futid futdata fheap = (fheap' { fhToCallback = toCallback' }, results)
+    where
+    callbacks = fromMaybe [] $ Map.lookup futid (fhToCallback fheap)
+    toCallback' = Map.delete futid (fhToCallback fheap)
+    (fheap', results) = callbackFHeap futdata callbacks fheap
+
+waitFor :: Time -> IO ()
+waitFor (Time time) = do
+    now <- getCurrentTime
+    if time < now
+        then return ()
+        else do
+            let diff = realToFrac $ diffUTCTime time now
+            threadDelay . ceiling $ 1000000 * diff       
+
+makeTimer :: Time -> IO (STM ())
+makeTimer (Time time) = do
+    now <- getCurrentTime
+    if time < now
+        then return (return ())
+        else do
+            var <- atomically $ newTVar False
+            forkIO $ do
+                waitFor (Time time)
+                atomically $ writeTVar var True
+            return $ do
+                v <- readTVar var
+                unless v retry
+
+
+data PrimFutureHeap a = PrimFutureHeap {
+    pfhChan   :: TChan (FutureID, GHC.Prim.Any),
+    pfhFHeap  :: TVar (FHeap a),
+    pfhExacts :: TVar (Map.Map Time [(FutureID, GHC.Prim.Any)])
+}
+
+newUniqueSTM :: STM Unique
+newUniqueSTM = unsafeIOToSTM newUnique
 
 modifyTVar :: TVar a -> (a -> a) -> STM ()
-modifyTVar tv f = do
-    val <- readTVar tv
-    writeTVar tv (f val)
+modifyTVar tv f = writeTVar tv . f =<< readTVar tv
 
-newPrimFuture :: PrimFutureMap r -> IO (PrimFuture a)
-newPrimFuture fm = do
-    ident <- newUnique
-    let pfut = PrimFuture ident
-    addFinalizer pfut . atomically $ modifyTVar (fmMap fm) (Map.delete ident)
-    return pfut
-
-activatePrimFuture :: PrimFutureMap r -> PrimFuture a -> a -> IO ()
-activatePrimFuture fm pf x = do
-    elem <- atomically $ do
-        mp <- readTVar (fmMap fm)
-        writeTVar (fmMap fm) (Map.delete (pfIdent pf) mp)
-        return $ Map.lookup (pfIdent pf) mp
-    case elem of
-        Nothing -> do
-            warn "Dead future activated!  This is not good."
-            return ()
-        Just f -> atomically $ do
-            t <- unsafeIOToSTM now
-            writeTChan (fmChan fm) (t, unsafeCoerce f x)
-
-newPrimFutureThread :: PrimFutureMap r -> IO a -> IO (PrimFuture a)
-newPrimFutureThread fm thread = do
-    pf <- newPrimFuture fm
-    threadidvar <- newEmptyMVar
-    weakpf <- mkWeakPtr pf (Just (killThread =<< takeMVar threadidvar))
-    threadid <- forkIO $ do
-        x <- thread
-        mpf' <- deRefWeak weakpf
-        case mpf' of
-            Nothing -> return ()
-            Just pf' -> activatePrimFuture fm pf' x
-    return pf
-        
-
-addListener :: (Monoid r) => PrimFutureMap r -> PrimFuture a -> (a -> r) -> IO ()
-addListener fm pf transform = atomically $ do
-    mp <- readTVar (fmMap fm)
-    let newentry = case Map.lookup (pfIdent pf) mp of
-                        Nothing -> transform
-                        Just t' -> liftM2 mappend (unsafeCoerce t') transform
-    writeTVar (fmMap fm) (Map.insert (pfIdent pf) (unsafeCoerce newentry) mp)
-
-listen :: PrimFutureMap r -> STM (Time, r)
-listen fm = readTChan (fmChan fm)
+insertFuture' :: forall a b. PrimFutureHeap a -> [CallbackID] -> (b -> a) -> PrimFuture b -> STM [CallbackID]
+insertFuture' pfheap related = go
+    where
+    go :: forall b. (b -> a) -> PrimFuture b -> STM [CallbackID]
+    go trans (Ident fid) = do
+        cbid <- newUniqueSTM
+        modifyTVar (pfhFHeap pfheap) $
+            insertCallback cbid (trans . unsafeCoerce) related >>>
+            insertAssoc fid cbid
+        return [cbid]
+    go trans (Exact time x) = do
+        fid <- newUniqueSTM
+        modifyTVar (pfhExacts pfheap) $ Map.insertWith (++) time [(fid, unsafeCoerce x)]
+        go trans (Ident fid)
+    go trans (FMap f pf) = go (trans . f) pf
+    go trans (MConcat pfs) = fmap concat $ mapM (go trans) pfs
+    
+insertFuture :: PrimFutureHeap a -> PrimFuture a -> IO ()
+insertFuture pfheap pf = mdo 
+    related <- atomically $ insertFuture' pfheap related id pf
+    return ()
