@@ -1,5 +1,7 @@
 module Frag.Future 
-    (Time, Future, waitFor, Heap, newHeap, insert, new, wait)
+    ( Time, shift, diff, now, waitFor
+    , Future, Heap, newHeap, insert, new, wait
+    )
 where
 
 import Data.Unique
@@ -20,6 +22,15 @@ import Control.Monad.Fix
 
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
+
+shift :: Double -> Time -> Time
+shift secs (Time time) = Time $ addUTCTime (realToFrac secs) time
+
+diff :: Time -> Time -> Double
+diff (Time t') (Time t) = realToFrac $ diffUTCTime t' t
+
+now :: IO Time
+now = fmap Time getCurrentTime
 
 data Future a where
     Ident   :: FutureID -> Future a
@@ -141,7 +152,7 @@ insert pfheap pf = mdo
     related <- atomically $ insert' pfheap related id pf
     return ()
 
-new :: Heap a -> IO (Future a, a -> IO ())
+new :: Heap a -> IO (Future b, b -> IO ())
 new pfheap = do
     fid <- newUnique
     return (Ident fid, \x -> atomically $ writeTChan (pfhChan pfheap) (fid, unsafeCoerce x))
@@ -160,7 +171,10 @@ wait pfheap = do
                 else do
                     let (time,vs) = Map.findMin exacts
                     t <- makeTimer time
-                    return $ t >> return (time,vs)
+                    return $ do
+                        t 
+                        modifyTVar (pfhExacts pfheap) (Map.delete time)
+                        return (time,vs)
     atomically $ do
         (time,assocs) <- timer `orElse` withTimeSTM (fmap (:[]) (readTChan (pfhChan pfheap)))
         heap0 <- readTVar (pfhFHeap pfheap)
