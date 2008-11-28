@@ -12,7 +12,7 @@ import Unsafe.Coerce
 import qualified GHC.Prim
 import Data.Maybe
 import Control.Monad (unless)
-import Control.Arrow ((>>>))
+import Control.Arrow ((>>>), second)
 import Data.Monoid (Monoid, mempty, mappend, mconcat)
 import Control.Monad.Fix
 
@@ -124,7 +124,37 @@ insertFuture' pfheap related = go
     go trans (FMap f pf) = go (trans . f) pf
     go trans (MConcat pfs) = fmap concat $ mapM (go trans) pfs
     
-insertFuture :: PrimFutureHeap a -> PrimFuture a -> IO ()
-insertFuture pfheap pf = mdo 
+insertPrimFuture :: PrimFutureHeap a -> PrimFuture a -> IO ()
+insertPrimFuture pfheap pf = mdo 
     related <- atomically $ insertFuture' pfheap related id pf
     return ()
+
+newPrimFuture :: PrimFutureHeap a -> IO (PrimFuture a, a -> IO ())
+newPrimFuture pfheap = do
+    fid <- newUnique
+    return (Ident fid, \x -> atomically $ writeTChan (pfhChan pfheap) (fid, unsafeCoerce x))
+
+withTimeSTM :: STM a -> STM (Time,a)
+withTimeSTM stm = do
+    r <- stm
+    t <- unsafeIOToSTM getCurrentTime
+    return (Time t,r)
+
+waitPrimFuture :: PrimFutureHeap a -> IO (Time, [a])
+waitPrimFuture pfheap = do
+    exacts <- atomically $ readTVar (pfhExacts pfheap)
+    timer <- if Map.null exacts
+                then return retry
+                else do
+                    let (time,vs) = Map.findMin exacts
+                    t <- makeTimer time
+                    return $ t >> return (time,vs)
+    atomically $ do
+        (time,assocs) <- timer `orElse` withTimeSTM (fmap (:[]) (readTChan (pfhChan pfheap)))
+        heap0 <- readTVar (pfhFHeap pfheap)
+        let (heap',results) = 
+                foldr (\(futid,fdata) (heap,results) -> 
+                            second (++results) $ activateFHeap futid fdata heap)
+                    (heap0,[]) assocs
+        writeTVar (pfhFHeap pfheap) heap'
+        return (time,results)
