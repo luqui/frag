@@ -19,6 +19,7 @@ import Control.Monad (unless)
 import Control.Arrow ((>>>), second)
 import Data.Monoid (Monoid, mempty, mappend, mconcat)
 import Control.Monad.Fix
+import System.Mem.Weak
 
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
@@ -86,6 +87,15 @@ activateFHeap futid futdata fheap = (fheap' { fhToCallback = toCallback' }, resu
     callbacks = fromMaybe [] $ Map.lookup futid (fhToCallback fheap)
     toCallback' = Map.delete futid (fhToCallback fheap)
     (fheap', results) = callbackFHeap futdata callbacks fheap
+
+cleanupFHeap :: FutureID -> FHeap a -> FHeap a
+cleanupFHeap futid fheap = fheap { fhToCallback = toCallback', fhCallbacks = callbacks' }
+    where
+    toCallback' = Map.delete futid (fhToCallback fheap)
+    callbacks' = Map.difference (fhCallbacks fheap) cbset
+    cbset = Map.fromList [ (k,()) 
+                         | Just cbs <- return $ Map.lookup futid (fhToCallback fheap)
+                         , k <- cbs ]
 
 waitFor :: Time -> IO ()
 waitFor (Time time) = do
@@ -155,7 +165,9 @@ insert pfheap pf = mdo
 new :: Heap a -> IO (Future b, b -> IO ())
 new pfheap = do
     fid <- newUnique
-    return (Ident fid, \x -> atomically $ writeTChan (pfhChan pfheap) (fid, unsafeCoerce x))
+    let fut = Ident fid
+    addFinalizer fut . atomically $ modifyTVar (pfhFHeap pfheap) (cleanupFHeap fid)
+    return (fut, \x -> atomically $ writeTChan (pfhChan pfheap) (fid, unsafeCoerce x))
 
 withTimeSTM :: STM a -> STM (Time,a)
 withTimeSTM stm = do
