@@ -1,4 +1,4 @@
-module Frag.Future 
+module Frag.PrimFuture 
     ( Time, shift, diff, now, waitFor
     , Future, Heap, newHeap, insert, new, wait
     )
