@@ -1,4 +1,6 @@
-module Frag.PrimFuture where
+module Frag.Future 
+    (Time, Future, waitFor, Heap, newHeap, insert, new, wait)
+where
 
 import Data.Unique
 import qualified Data.Map as Map
@@ -19,16 +21,16 @@ import Control.Monad.Fix
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
 
-data PrimFuture a where
-    Ident   :: FutureID -> PrimFuture a
-    Exact   :: Time -> a -> PrimFuture a
-    FMap    :: (a -> b) -> PrimFuture a -> PrimFuture b
-    MConcat :: [PrimFuture a] -> PrimFuture a
+data Future a where
+    Ident   :: FutureID -> Future a
+    Exact   :: Time -> a -> Future a
+    FMap    :: (a -> b) -> Future a -> Future b
+    MConcat :: [Future a] -> Future a
 
-instance Functor PrimFuture where
+instance Functor Future where
     fmap = FMap
 
-instance Monoid (PrimFuture a) where
+instance Monoid (Future a) where
     mempty = MConcat []
     mappend a b = MConcat [a,b]
     mconcat = MConcat
@@ -43,6 +45,9 @@ data FHeap a = FHeap {
     -- related callbacks (which should be removed)
     fhCallbacks  :: Map.Map CallbackID (GHC.Prim.Any -> a, [CallbackID])
 }
+
+emptyFHeap :: FHeap a
+emptyFHeap = FHeap { fhToCallback = Map.empty, fhCallbacks = Map.empty }
 
 insertCallback :: CallbackID -> (GHC.Prim.Any -> a) -> [CallbackID] -> FHeap a -> FHeap a
 insertCallback cbid cb related fheap = 
@@ -95,11 +100,18 @@ makeTimer (Time time) = do
                 unless v retry
 
 
-data PrimFutureHeap a = PrimFutureHeap {
+data Heap a = Heap {
     pfhChan   :: TChan (FutureID, GHC.Prim.Any),
     pfhFHeap  :: TVar (FHeap a),
     pfhExacts :: TVar (Map.Map Time [(FutureID, GHC.Prim.Any)])
 }
+
+newHeap :: IO (Heap a)
+newHeap = atomically $ do
+    chan   <- newTChan
+    fheap  <- newTVar emptyFHeap
+    exacts <- newTVar Map.empty
+    return $ Heap { pfhChan = chan, pfhFHeap = fheap, pfhExacts = exacts }
 
 newUniqueSTM :: STM Unique
 newUniqueSTM = unsafeIOToSTM newUnique
@@ -107,10 +119,10 @@ newUniqueSTM = unsafeIOToSTM newUnique
 modifyTVar :: TVar a -> (a -> a) -> STM ()
 modifyTVar tv f = writeTVar tv . f =<< readTVar tv
 
-insertFuture' :: forall a b. PrimFutureHeap a -> [CallbackID] -> (b -> a) -> PrimFuture b -> STM [CallbackID]
-insertFuture' pfheap related = go
+insert' :: forall a b. Heap a -> [CallbackID] -> (b -> a) -> Future b -> STM [CallbackID]
+insert' pfheap related = go
     where
-    go :: forall b. (b -> a) -> PrimFuture b -> STM [CallbackID]
+    go :: forall b. (b -> a) -> Future b -> STM [CallbackID]
     go trans (Ident fid) = do
         cbid <- newUniqueSTM
         modifyTVar (pfhFHeap pfheap) $
@@ -124,13 +136,13 @@ insertFuture' pfheap related = go
     go trans (FMap f pf) = go (trans . f) pf
     go trans (MConcat pfs) = fmap concat $ mapM (go trans) pfs
     
-insertPrimFuture :: PrimFutureHeap a -> PrimFuture a -> IO ()
-insertPrimFuture pfheap pf = mdo 
-    related <- atomically $ insertFuture' pfheap related id pf
+insert :: Heap a -> Future a -> IO ()
+insert pfheap pf = mdo 
+    related <- atomically $ insert' pfheap related id pf
     return ()
 
-newPrimFuture :: PrimFutureHeap a -> IO (PrimFuture a, a -> IO ())
-newPrimFuture pfheap = do
+new :: Heap a -> IO (Future a, a -> IO ())
+new pfheap = do
     fid <- newUnique
     return (Ident fid, \x -> atomically $ writeTChan (pfhChan pfheap) (fid, unsafeCoerce x))
 
@@ -140,8 +152,8 @@ withTimeSTM stm = do
     t <- unsafeIOToSTM getCurrentTime
     return (Time t,r)
 
-waitPrimFuture :: PrimFutureHeap a -> IO (Time, [a])
-waitPrimFuture pfheap = do
+wait :: Heap a -> IO (Time, [a])
+wait pfheap = do
     exacts <- atomically $ readTVar (pfhExacts pfheap)
     timer <- if Map.null exacts
                 then return retry
