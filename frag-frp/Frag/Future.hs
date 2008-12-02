@@ -1,4 +1,9 @@
-module Frag.Future where
+module Frag.Future 
+    ( Future
+    , primFutureToFuture
+    , waitFuture, waitMultipleFutures
+    )
+where
 
 import Control.Monad
 import Frag.PrimFuture
@@ -25,3 +30,16 @@ instance MonadPlus Future where
     Suspend cs `mplus` Suspend cs' = Suspend (cs ++ cs')
 
 
+primFutureToFuture :: PrimFuture a -> Future a
+primFutureToFuture pf = Suspend [fmap Return pf]
+
+waitFuture :: Listener -> Future a -> IO a
+waitFuture listener f = fmap head $ waitMultipleFutures listener [f]
+
+waitMultipleFutures :: Listener -> [Future a] -> IO [a]
+waitMultipleFutures listener fs = do
+    let immediate = [ a | Return a <- fs ]
+    let pfs = [ pf | Suspend pfs' <- fs, pf <- pfs' ]
+    case immediate of
+        [] -> waitMultipleFutures listener =<< waitFutures listener pfs
+        _  -> return immediate
