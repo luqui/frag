@@ -1,4 +1,4 @@
-module Frag.Behavior (Fun, evalFun) where
+module Frag.Fun (Fun, evalFun) where
 
 import Frag.Reactive
 import Control.Applicative hiding (Const(Const))
