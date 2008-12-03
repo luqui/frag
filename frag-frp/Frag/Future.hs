@@ -7,6 +7,7 @@ where
 
 import Control.Monad
 import Frag.PrimFuture
+import Control.Applicative
 
 data Future a where
     Return  :: a -> Future a
@@ -29,6 +30,9 @@ instance MonadPlus Future where
     Suspend _  `mplus` Return x    = Return x
     Suspend cs `mplus` Suspend cs' = Suspend (cs ++ cs')
 
+instance Applicative Future where
+    pure = return
+    (<*>) = ap
 
 primFutureToFuture :: PrimFuture a -> Future a
 primFutureToFuture pf = Suspend [fmap Return pf]
