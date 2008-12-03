@@ -1,4 +1,8 @@
-module Frag.Reactive where
+module Frag.Reactive 
+    ( Reactive
+    , until, snapshot
+    )
+where
 
 import Prelude hiding (until)
 import Frag.Future
@@ -31,5 +35,4 @@ until (Reactive x xs) fut = Reactive x (xs `mplus` fut)
 
 snapshot :: Reactive a -> Future b -> Future (a,b)
 snapshot (Reactive x fxs) fut = 
-    (fxs >>= \xs -> snapshot xs fut) `mplus` fmap ((,) x) fut
-
+     fmap ((,) x) fut `mplus` (fxs >>= \xs -> snapshot xs fut)
