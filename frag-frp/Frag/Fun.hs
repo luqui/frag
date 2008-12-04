@@ -1,6 +1,5 @@
 module Frag.Fun (Fun, evalFun) where
 
-import Frag.Reactive
 import Control.Applicative hiding (Const(Const))
 
 data Fun a b

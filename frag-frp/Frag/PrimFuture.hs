@@ -1,6 +1,6 @@
 module Frag.PrimFuture 
     ( PrimFuture
-    , Listener, newListener, destroyListener, newEvent, waitFutures
+    , Listener, newListener, newSink, wait
     )
 where
 
@@ -22,34 +22,24 @@ instance Functor PrimFuture where
 
 
 data Listener = Listener {
-    listenerChan :: Chan (Unique, GHC.Prim.Any),
-    listenerThreads :: MVar [ThreadId]
+    listenerChan :: Chan (Unique, GHC.Prim.Any)
 }
 
 newListener :: IO Listener
 newListener = do
     chan <- newChan
-    var <- newMVar []
-    return $ Listener chan var
+    return $ Listener chan
 
-destroyListener :: Listener -> IO ()
-destroyListener listener = do
-    threads <- takeMVar (listenerThreads listener)
-    mapM_ killThread threads
-
-newEvent :: Listener -> IO a -> IO (PrimFuture a)
-newEvent (Listener chan threadvar) action = do
+newSink :: Listener -> IO (PrimFuture a, a -> IO ())
+newSink (Listener chan) = do
     ident <- newUnique
-    threadid <- forkIO . forever $ do
-        x <- action
-        writeChan chan (ident, unsafeCoerce x)
-    modifyMVar_ threadvar (return . (threadid:))
-    return $ PrimFuture ident unsafeCoerce
+    return (PrimFuture ident unsafeCoerce, 
+            \x -> writeChan chan (ident, unsafeCoerce x))
 
-waitFutures :: Listener -> [PrimFuture a] -> IO [a]
-waitFutures listener futures = do
+wait :: Listener -> [PrimFuture a] -> IO [a]
+wait listener futures = do
     (ident,fdat) <- readChan (listenerChan listener)
     let ans = [ pfCast fut fdat | fut <- futures, pfID fut == ident ]
     case ans of
-        [] -> waitFutures listener futures
+        [] -> wait listener futures
         _  -> return ans

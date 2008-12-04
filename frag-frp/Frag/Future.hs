@@ -1,17 +1,17 @@
 module Frag.Future 
     ( Future
-    , primFutureToFuture
-    , waitFuture, waitMultipleFutures
+    , fromPrim
+    , wait, waitMultiple
     )
 where
 
 import Control.Monad
-import Frag.PrimFuture
+import qualified Frag.PrimFuture as PrimFuture
 import Control.Applicative
 
 data Future a where
     Return  :: a -> Future a
-    Suspend :: [PrimFuture (Future a)] -> Future a
+    Suspend :: [PrimFuture.PrimFuture (Future a)] -> Future a
 
 instance Functor Future where
     fmap f (Return x) = Return (f x)
@@ -34,16 +34,16 @@ instance Applicative Future where
     pure = return
     (<*>) = ap
 
-primFutureToFuture :: PrimFuture a -> Future a
-primFutureToFuture pf = Suspend [fmap Return pf]
+fromPrim :: PrimFuture.PrimFuture a -> Future a
+fromPrim pf = Suspend [fmap Return pf]
 
-waitFuture :: Listener -> Future a -> IO a
-waitFuture listener f = fmap head $ waitMultipleFutures listener [f]
+wait :: PrimFuture.Listener -> Future a -> IO a
+wait listener f = fmap head $ waitMultiple listener [f]
 
-waitMultipleFutures :: Listener -> [Future a] -> IO [a]
-waitMultipleFutures listener fs = do
+waitMultiple :: PrimFuture.Listener -> [Future a] -> IO [a]
+waitMultiple listener fs = do
     let immediate = [ a | Return a <- fs ]
     let pfs = [ pf | Suspend pfs' <- fs, pf <- pfs' ]
     case immediate of
-        [] -> waitMultipleFutures listener =<< waitFutures listener pfs
+        [] -> waitMultiple listener =<< PrimFuture.wait listener pfs
         _  -> return immediate
