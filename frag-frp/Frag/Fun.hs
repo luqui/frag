@@ -1,6 +1,8 @@
 module Frag.Fun (Fun, evalFun) where
 
 import Control.Applicative hiding (Const(Const))
+import Control.Comonad
+import Data.Monoid
 
 data Fun a b
     = Const b
@@ -25,3 +27,10 @@ instance Monad (Fun a) where
     return = Const
     Const b >>= f = f b
     Fun ff  >>= f = Fun (\t -> evalFun (f (ff t)) t)
+
+instance (Monoid a) => Copointed (Fun a) where
+    extract f = evalFun f mempty
+
+instance (Monoid a) => Comonad (Fun a) where
+    duplicate (Const x) = Const (Const x)
+    duplicate (Fun f) = Fun (\a -> Fun (\b -> f (a `mappend` b)))
