@@ -82,6 +82,9 @@ makeEvent = do
     return (event, sink)
 
 
+-- A, um, "behavior", which can be translated around and do about the same thing.
+-- For some definition of same.  I have no idea what its semantics are, but they
+-- kinda make sense.
 data Behavior a
     = Behavior (Env a) (Event (Behavior a))
 
