@@ -109,10 +109,17 @@ until env event trans = Behavior env (joinEventEnv $ fmap trans event)
 
 runBehaviorSamples :: Double -> Sink a -> Behavior a -> IO ()
 runBehaviorSamples rate sink b@(Behavior env cont) = do
-    delayvar <- registerDelay (rateToMicrosecs rate)
+    -- if it's a DynEnv, then timeout in 'rate' seconds
+    -- otherwise never timeout (i.e. block until next event)
+    timeout <- case env of
+                    ConstEnv x -> return retry
+                    DynEnv io  -> do
+                        delayvar <- registerDelay (rateToMicrosecs rate)
+                        return $ assert (return b) =<< readTVar delayvar
+     
     sink =<< runEnv env
     stm <- runEvent cont
-    next <- atomically $ stm `orElse` (assert (return b) =<< readTVar delayvar)
+    next <- atomically $ stm `orElse` timeout
     runBehaviorSamples rate sink =<< runEnv next
     where
     rateToMicrosecs r = floor (1000000/r)
