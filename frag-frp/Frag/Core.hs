@@ -1,6 +1,6 @@
 module Frag.Core 
     ( Sink, Env, runEnv, unsafeCastEnv
-    , Event, makeEvent
+    , Event, snapshot, makeEvent
     , Behavior, until
     , runBehaviorSamples
     )
@@ -69,6 +69,8 @@ instance MonadPlus Event where
     mzero = mempty
     mplus = mappend
 
+snapshot :: Env a -> Event b -> Event (a,b)
+snapshot env event = Event $ fmap (liftA2 (,) env) <$> runEvent event
 
 makeEvent :: IO (Event a, Sink a)
 makeEvent = do
@@ -95,11 +97,11 @@ instance Applicative Behavior where
         xfirst = fmap (f <*>) xcont
 
 
-joinOutEnv :: Event (Env (Behavior a)) -> Event (Behavior a)
-joinOutEnv (Event m) = Event ((fmap.fmap) join m)
+joinEventEnv :: Event (Env a) -> Event a
+joinEventEnv (Event m) = Event ((fmap.fmap) join m)
 
 until :: Env a -> Event b -> (b -> Env (Behavior a)) -> Behavior a
-until env event trans = Behavior env (joinOutEnv $ fmap trans event)
+until env event trans = Behavior env (joinEventEnv $ fmap trans event)
 
 
 runBehaviorSamples :: Double -> Sink a -> Behavior a -> IO ()
