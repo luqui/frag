@@ -1,5 +1,5 @@
 module Frag.Behavior
-    ( Sink, Behavior, until, runBehaviorSamples )
+    ( Sink, Behavior, liftEnv, until, runBehaviorSamples )
 where
 
 import Prelude hiding (until)
@@ -31,10 +31,14 @@ instance Applicative Behavior where
         ffirst = fmap (<*> x) fcont
         xfirst = fmap (f <*>) xcont
 
+liftEnv :: Env a -> Behavior a
+liftEnv env = Behavior env mempty
 
-until :: Env a -> Event b -> (b -> Env (Behavior a)) -> Behavior a
-until env event trans = Behavior env (joinEventEnv $ fmap trans event)
-
+until :: Behavior a -> Event b -> (b -> Env (Behavior a)) -> Behavior a
+until (Behavior env ev) ev' trans = Behavior env (ltrans `mappend` rtrans)
+    where
+    ltrans = fmap (\b' -> until b' ev' trans) ev
+    rtrans = joinEventEnv $ fmap trans ev'
 
 runBehaviorSamples :: Double -> Sink a -> Behavior a -> IO ()
 runBehaviorSamples rate sink b@(Behavior env cont) = do
