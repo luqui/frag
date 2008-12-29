@@ -11,7 +11,7 @@ import Control.Applicative
 import Data.Monoid
 import Control.Concurrent.STM
 import GHC.Conc (registerDelay)
-import Control.Monad (ap, MonadPlus(..))
+import Control.Monad (ap, MonadPlus(..), join)
 
 type Sink a = a -> IO ()
 
@@ -45,14 +45,14 @@ unsafeCastEnv :: IO a -> Env a
 unsafeCastEnv = DynEnv
 
 
-newtype Event a = Event { runEvent :: IO (STM a) }
+newtype Event a = Event { runEvent :: IO (STM (Env a)) }
 
 instance Functor Event where
-    fmap f (Event m) = Event ((fmap.fmap) f m)
+    fmap f (Event m) = Event ((fmap.fmap.fmap) f m)
 
 instance Monad Event where
-    return = Event . return . return
-    Event m >>= t = Event $ runEvent . t =<< atomically =<< m
+    return = Event . return . return . return
+    Event m >>= t = Event $ runEvent . t =<< runEnv =<< atomically =<< m
 
 instance Applicative Event where
     pure = return
@@ -76,27 +76,30 @@ makeEvent = do
     let sink = atomically . writeTChan chan
     let event = Event $ do
             chan' <- atomically $ dupTChan chan
-            return $ readTChan chan'
+            return . fmap return $ readTChan chan'
     return (event, sink)
 
 
 data Behavior a
-    = Behavior (Env a) (Event (Env (Behavior a)))
+    = Behavior (Env a) (Event (Behavior a))
 
 instance Functor Behavior where
-    fmap f (Behavior e cont) = Behavior (fmap f e) ((fmap.fmap.fmap) f cont)
+    fmap f (Behavior e cont) = Behavior (fmap f e) ((fmap.fmap) f cont)
 
 instance Applicative Behavior where
     pure x = Behavior (pure x) mempty
     f@(Behavior fe fcont) <*> x@(Behavior xe xcont) =
         Behavior (fe <*> xe) (ffirst `mappend` xfirst)
         where
-        ffirst = (fmap.fmap) (<*> x) fcont
-        xfirst = (fmap.fmap) (f <*>) xcont
+        ffirst = fmap (<*> x) fcont
+        xfirst = fmap (f <*>) xcont
 
+
+joinOutEnv :: Event (Env (Behavior a)) -> Event (Behavior a)
+joinOutEnv (Event m) = Event ((fmap.fmap) join m)
 
 until :: Env a -> Event b -> (b -> Env (Behavior a)) -> Behavior a
-until env event trans = Behavior env (fmap trans event)
+until env event trans = Behavior env (joinOutEnv $ fmap trans event)
 
 
 runBehaviorSamples :: Double -> Sink a -> Behavior a -> IO ()
