@@ -63,4 +63,6 @@ waitEvent (Dispatcher chan) (Wait cs) = go
         case Map.lookup ident cs of
             Nothing -> go
             Just f -> do
+                -- If we don't wait on the remainder, 
+                -- mplus is not distributive over bind.
                 waitEvent (Dispatcher chan) (f val `mplus` Wait (Map.delete ident cs))
