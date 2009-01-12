@@ -62,4 +62,5 @@ waitEvent (Dispatcher chan) (Wait cs) = go
         (ident, val) <- readChan chan
         case Map.lookup ident cs of
             Nothing -> go
-            Just f -> waitEvent (Dispatcher chan) (f val)
+            Just f -> do
+                waitEvent (Dispatcher chan) (f val `mplus` Wait (Map.delete ident cs))
