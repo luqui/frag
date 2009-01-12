@@ -51,7 +51,7 @@ newEventTrigger :: Dispatcher -> IO (Event a, a -> IO ())
 newEventTrigger (Dispatcher chan) = do
     ident <- newUnique
     let event   = Wait (Map.singleton ident (Return . unsafeCoerce))
-        trigger = writeChan chan . unsafeCoerce
+        trigger x = writeChan chan (ident, unsafeCoerce x)
     return (event, trigger)
 
 waitEvent :: Dispatcher -> Event a -> IO a
