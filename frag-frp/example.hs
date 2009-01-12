@@ -9,7 +9,7 @@ main = sdlMain $ \e ->
     let mouse = filterEvent mouseFilter e
         pos = step (0,0) mouse
     in
-    Draw.translate <$> pos <*> pure Draw.circle
+    Draw.translate <$> pos <*> pure (Draw.scale 0.1 0.1 Draw.circle)
 
 filterEvent :: (a -> Maybe b) -> Event a -> Event b
 filterEvent f e = maybe (filterEvent f e) return =<< f <$> e
