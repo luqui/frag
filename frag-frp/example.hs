@@ -1,5 +1,5 @@
 import Frag.Event
-import Frag.Reactive
+import Frag.StateMachine
 import Frag.SDL
 import qualified Graphics.DrawingCombinators as Draw
 import Control.Applicative
