@@ -9,7 +9,7 @@ where
 import Frag.Event
 import Control.Comonad
 import Control.Applicative
-import Control.Monad (MonadPlus(..))
+import Data.Monoid (Monoid(..))
 
 data StateMachine a = StateMachine a (Event (StateMachine a))
 
@@ -17,9 +17,9 @@ instance Functor StateMachine where
     fmap f (StateMachine x xs) = StateMachine (f x) ((fmap.fmap) f xs)
 
 instance Applicative StateMachine where
-    pure x = StateMachine x mzero
+    pure x = StateMachine x mempty
     fr@(StateMachine f fs) <*> xr@(StateMachine x xs) =
-        StateMachine (f x) (fmap (<*> xr) fs `mplus` fmap (fr <*>) xs)
+        StateMachine (f x) (fmap (<*> xr) fs `mappend` fmap (fr <*>) xs)
 
 instance Copointed StateMachine where
     extract (StateMachine x _) = x

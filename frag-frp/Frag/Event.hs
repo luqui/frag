@@ -13,9 +13,14 @@ import qualified Data.Map as Map
 import Control.Concurrent.Chan
 import Data.Monoid (Monoid(..))
 
+newtype PrimMap a = PrimMap (Map.Map Unique (Any -> a))
+
+instance Functor PrimMap where
+    fmap f (PrimMap m) = PrimMap ((fmap.fmap) f m)
+
 data Event a
     = Return a
-    | Wait (Map.Map Unique (Any -> Event a))
+    | Wait [PrimMap (Event a)]
 
 instance Functor Event where
     fmap f (Return x) = Return (f x)
@@ -31,15 +36,20 @@ instance Applicative Event where
     pure = return
     (<*>) = ap
 
-instance MonadPlus Event where
-    mzero = Wait Map.empty
-    Return x `mplus` _ = Return x
-    _ `mplus` Return x = Return x
-    Wait cs `mplus` Wait cs' = Wait (Map.unionWith (liftA2 mplus) cs cs')
+never :: Event a
+never = Wait []
 
+firstOf :: Event a -> Event a -> Event a
+firstOf (Return x) _ = Return x
+firstOf _ (Return x) = Return x
+firstOf (Wait m) (Wait m') = Wait (m ++ m')
+    
+
+-- Event is not an instance of MonadPlus, because
+-- mplus does not distribute over >>=.
 instance Monoid (Event a) where
-    mempty = mzero
-    mappend = mplus
+    mempty = never
+    mappend = firstOf
 
 
 newtype Dispatcher = Dispatcher (Chan (Unique, Any))
@@ -50,19 +60,18 @@ newDispatcher = Dispatcher <$> newChan
 newEventTrigger :: Dispatcher -> IO (Event a, a -> IO ())
 newEventTrigger (Dispatcher chan) = do
     ident <- newUnique
-    let event   = Wait (Map.singleton ident (Return . unsafeCoerce))
+    let event   = Wait [PrimMap $ Map.singleton ident (Return . unsafeCoerce)]
         trigger x = writeChan chan (ident, unsafeCoerce x)
     return (event, trigger)
 
+evolvePrim :: Unique -> Any -> PrimMap (Event a) -> Event a
+evolvePrim ident val (PrimMap m) = 
+    case Map.lookup ident m of
+        Nothing -> Wait [PrimMap m]
+        Just cc -> cc val
+
 waitEvent :: Dispatcher -> Event a -> IO a
 waitEvent _ (Return x) = return x
-waitEvent (Dispatcher chan) (Wait cs) = go
-    where
-    go = do
-        (ident, val) <- readChan chan
-        case Map.lookup ident cs of
-            Nothing -> go
-            Just f -> do
-                -- If we don't wait on the remainder, 
-                -- mplus is not distributive over bind.
-                waitEvent (Dispatcher chan) (f val `mplus` Wait (Map.delete ident cs))
+waitEvent (Dispatcher chan) (Wait cs) = do
+    (ident, val) <- readChan chan
+    waitEvent (Dispatcher chan) . foldr1 firstOf . map (evolvePrim ident val) $ cs
