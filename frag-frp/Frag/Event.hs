@@ -1,7 +1,7 @@
 module Frag.Event 
     ( Event
     , merge, never, withTime, filterMap, filter, once
-    , EventBuilder, wait, currentTime, fire
+    , EventBuilder, wait, liftTime, fire
     , buildEvent
     
     -- legacy adapters
@@ -105,14 +105,14 @@ instance Applicative (EventBuilder r) where
     pure = return
     (<*>) = ap
 
+-- | > liftTime f t = (t, never, f t)
+liftTime :: TimeFun a -> EventBuilder r a
+liftTime = EventBuilder . lift . runTimeFun
+
 -- | > wait e t = (t', never, x)
 --   >     where (t',x) = least occurrence of e after t
 wait :: Event a -> EventBuilder r a
 wait e = EventBuilder . lift . waitEvent $ e
-
--- | > currentTime = (t, never, t)
-currentTime :: EventBuilder r Time
-currentTime = EventBuilder . lift . runTimeFun $ time
 
 -- | > fire x t = (t, once t x, ())
 -- (currently this does not respect the semantics, in that multiple events
