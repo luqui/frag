@@ -1,6 +1,5 @@
 module Frag.Event 
-    ( Time, shiftTime, diffTime
-    , Event
+    ( Event
     , merge, never, withTime, filterMap, filter, once
     , EventBuilder, wait, currentTime, fire
     
@@ -12,26 +11,17 @@ where
 import Prelude hiding (filter)
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
-import Data.Time.Clock
-import Data.Time.Calendar
 import Control.Arrow (second)
 import Data.Monoid (Monoid(..))
 import Control.Monad.Reader
 import Control.Concurrent
 import System.IO.Unsafe (unsafePerformIO)
 
-newtype Time = Time UTCTime
-    deriving (Eq, Ord)
-
-shiftTime :: Double -> Time -> Time
-shiftTime amt (Time t) = Time $ addUTCTime (realToFrac amt) t
-
-diffTime :: Time -> Time -> Double
-diffTime (Time t) (Time t') = realToFrac (diffUTCTime t t')
+import Frag.Time
 
 -- | > Event a = Set (Time, a)
 -- @(never, merge)@ forms a Monoid on @Event a@.
-newtype Event a = Event { runEvent :: UTCTime -> STM (UTCTime, a) }
+newtype Event a = Event { runEvent :: Time -> STM (Time, a) }
 
 instance Functor Event where
     fmap f (Event e) = Event ((fmap.fmap.second) f e)
@@ -63,9 +53,9 @@ instance Monoid (Event a) where
 
 -- | > withTime e = { (t, { (t,x) | x <- s} | (t,s) <- e }
 withTime :: Event a -> Event (Time,a)
-withTime (Event e) = Event ((fmap.fmap) mod e)
+withTime (Event e) = Event ((fmap.fmap) modify e)
     where
-    mod (t,x) = (t,(Time t,x))
+    modify (t,x) = (t,(t,x))
 
 -- | > filterMap p e = { (t,y) | (t,x) <- e, Just y <- p x }
 filterMap :: (a -> Maybe b) -> Event a -> Event b
@@ -79,22 +69,22 @@ filterMap p e = Event $ \t -> do
 filter :: (a -> Bool) -> Event a -> Event a
 filter p = filterMap (\x -> if p x then Just x else Nothing)
 
-unsafeStepFun :: UTCTime -> TVar Bool
+unsafeStepFun :: Time -> TVar Bool
 {-# NOINLINE unsafeStepFun #-}
 unsafeStepFun t = unsafePerformIO $ do
-    now <- getCurrentTime
+    now <- runTimeFun time
     if t < now
         then newTVarIO True
         else do
             var <- newTVarIO False
             forkIO $ do
-                threadDelay . ceiling . (1000000*) . realToFrac $ diffUTCTime t now
+                threadDelay . ceiling . (1000000*) $ diffTime t now
                 atomically $ writeTVar var True
             return var
 
 -- | > once t x = { (t,x) }
 once :: Time -> a -> Event a
-once (Time t) x = Event $ \t' -> do
+once t x = Event $ \t' -> do
     if t < t' then retry else do
         let var = unsafeStepFun t
         v <- readTVar var
@@ -114,7 +104,7 @@ wait e = EventBuilder . lift . waitEvent $ e
 
 -- | > currentTime = (t, never, t)
 currentTime :: EventBuilder r Time
-currentTime = EventBuilder . lift . fmap Time $ getCurrentTime
+currentTime = EventBuilder . lift . runTimeFun $ time
 
 -- | > fire x t = (t, once t x, ())
 fire :: r -> EventBuilder r ()
@@ -128,8 +118,6 @@ buildEvent builder = do
     forkIO $ runReaderT (runEventBuilder builder) sink
     return event
 
-negativeInfinity = UTCTime (ModifiedJulianDay 0) (fromIntegral 0)
-
 newEventSink :: IO (Event a, a -> IO ())
 newEventSink = do
     var <- atomically $ newTVar (negativeInfinity, error "this never happened")
@@ -137,13 +125,13 @@ newEventSink = do
             (t', x) <- readTVar var
             if t' <= t then retry else return (t', x)
         sink val = do
-            t <- getCurrentTime
+            t <- runTimeFun time
             atomically $ writeTVar var (t,val)
     
     return (event, sink)
 
 waitEvent :: Event a -> IO a
 waitEvent e = do
-    now <- getCurrentTime
-    (t,x) <- atomically $ runEvent e now
+    now <- runTimeFun time
+    (_,x) <- atomically $ runEvent e now
     return x
