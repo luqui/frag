@@ -1,6 +1,6 @@
 module Frag.Event 
     ( Event
-    , merge, never, withTime, filterMap, filter, once
+    , merge, mergeWith, never, withTime, filterMap, filter, once
     , EventBuilder, wait, liftTime, fire
     , buildEvent
     
@@ -29,10 +29,13 @@ newtype Event a = Event { runEvent :: Time -> STM (Time, a) }
 instance Functor Event where
     fmap f (Event e) = Event ((fmap.fmap.second) f e)
 
--- | > merge = union -- (where union is left-biased)
+-- | > merge = mergeWith const
 -- @mappend@ on the Monoid instance
-merge :: Event a -> Event a -> Event a
-merge e e' = Event $ \t -> do
+merge = mergeWith const
+
+-- | > mergeWith = unionWith
+mergeWith :: (a -> a -> a) -> Event a -> Event a -> Event a
+mergeWith mergefun e e' = Event $ \t -> do
     let e1 = fmap Left (runEvent e t)
         e2 = fmap Right (runEvent e' t)
     r <- liftM2 (,) (e1 `orElse` e2) (e2 `orElse` e1)
@@ -42,8 +45,11 @@ merge e e' = Event $ \t -> do
         (Left x , Right y) -> least x y
         (Right y, Left x)  -> least x y
     where
-    least (t,x) (t',x') | t <= t'   = (t,x)
-                        | otherwise = (t',x') 
+    least (t,x) (t',x') =
+        case compare t t' of
+            LT -> (t, x)
+            EQ -> (t, mergefun x x')
+            GT -> (t', x')
 
 -- | > never = {}
 -- @mempty@ on the Monoid instance.
