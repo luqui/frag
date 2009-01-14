@@ -115,6 +115,9 @@ currentTime :: EventBuilder r Time
 currentTime = EventBuilder . lift . runTimeFun $ time
 
 -- | > fire x t = (t, once t x, ())
+-- (currently this does not respect the semantics, in that multiple events
+-- fired at the same time will take the last one, rather than the first
+-- as specified by the merge semantics)
 fire :: r -> EventBuilder r ()
 fire v = EventBuilder $ do
     sink <- ask
