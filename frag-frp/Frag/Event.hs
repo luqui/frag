@@ -1,5 +1,6 @@
 module Frag.Event 
-    ( Event
+    ( Time, shiftTime, diffTime
+    , Event
     , merge, never, withTime, filterMap, filter, once
     , EventBuilder, wait, currentTime, fire
     
@@ -22,11 +23,19 @@ import System.IO.Unsafe (unsafePerformIO)
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
 
+shiftTime :: Double -> Time -> Time
+shiftTime amt (Time t) = Time $ addUTCTime (realToFrac amt) t
+
+diffTime :: Time -> Time -> Double
+diffTime (Time t) (Time t') = realToFrac (diffUTCTime t t')
+
+-- | > Event a = Set (Time, a)
 newtype Event a = Event { runEvent :: UTCTime -> STM (UTCTime, a) }
 
 instance Functor Event where
     fmap f (Event e) = Event ((fmap.fmap.second) f e)
 
+-- | > merge = union -- (where union is left-biased)
 merge :: Event a -> Event a -> Event a
 merge e e' = Event $ \t -> do
     let e1 = fmap Left (runEvent e t)
@@ -41,6 +50,7 @@ merge e e' = Event $ \t -> do
     least (t,x) (t',x') | t <= t'   = (t,x)
                         | otherwise = (t',x') 
 
+-- | > never = {}
 never :: Event a
 never = Event . const $ retry
 
@@ -48,12 +58,13 @@ instance Monoid (Event a) where
     mempty = never
     mappend = merge
 
-
+-- | > withTime e = { (t, { (t,x) | x <- s} | (t,s) <- e }
 withTime :: Event a -> Event (Time,a)
 withTime (Event e) = Event ((fmap.fmap) mod e)
     where
     mod (t,x) = (t,(Time t,x))
 
+-- | > filterMap p e = { (t,y) | (t,x) <- e, Just y <- p x }
 filterMap :: (a -> Maybe b) -> Event a -> Event b
 filterMap p e = Event $ \t -> do
     (t',x) <- runEvent e t
@@ -61,6 +72,7 @@ filterMap p e = Event $ \t -> do
         Nothing -> retry
         Just y -> return (t',y)
 
+-- | > filter p = filterMap (\x -> if p x then Just x else Nothing)
 filter :: (a -> Bool) -> Event a -> Event a
 filter p = filterMap (\x -> if p x then Just x else Nothing)
 
@@ -77,6 +89,7 @@ unsafeStepFun t = unsafePerformIO $ do
                 atomically $ writeTVar var True
             return var
 
+-- | > once t x = { (t,x) }
 once :: Time -> a -> Event a
 once (Time t) x = Event $ \t' -> do
     if t < t' then retry else do
@@ -87,19 +100,24 @@ once (Time t) x = Event $ \t' -> do
 
 type Sink a = a -> IO ()
 
+-- | > EventBuilder r a = WriterT (Event r) (State Time) a
+--                      = Time -> (Time, Event r, a)
 newtype EventBuilder r a = EventBuilder { runEventBuilder :: ReaderT (Sink r) IO a }
 
+-- | > wait e t = (t', never, x)
+--   >     where (t',x) = least occurrence of e >= t
 wait :: Event a -> EventBuilder r a
 wait e = EventBuilder . lift . waitEvent $ e
 
+-- | > currentTime = (t, never, t)
 currentTime :: EventBuilder r Time
 currentTime = EventBuilder . lift . fmap Time $ getCurrentTime
-    
+
+-- | > fire x t = (t, once t x, ())
 fire :: r -> EventBuilder r ()
 fire v = EventBuilder $ do
     sink <- ask
     lift $ sink v
-
 
 buildEvent :: EventBuilder r () -> IO (Event r)
 buildEvent builder = do
