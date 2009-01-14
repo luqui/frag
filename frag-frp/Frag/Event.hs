@@ -10,8 +10,10 @@ import Prelude hiding (filter)
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
 import Data.Time.Clock
+import Data.Time.Calendar
 import Control.Arrow (second)
 import Data.Monoid (Monoid(..))
+import Control.Monad (liftM2)
 
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
@@ -21,16 +23,16 @@ newtype Event a = Event { runEvent :: UTCTime -> STM (UTCTime, a) }
 instance Functor Event where
     fmap f (Event e) = Event ((fmap.fmap.second) f e)
 
-merge :: Event a -> Event a
+merge :: Event a -> Event a -> Event a
 merge e e' = Event $ \t -> do
     let e1 = fmap Left (runEvent e t)
         e2 = fmap Right (runEvent e' t)
     r <- liftM2 (,) (e1 `orElse` e2) (e2 `orElse` e1)
     return $ case r of
-        (Left x , Left _)  = x
-        (Right y, Right _) = y
-        (Left x , Right y) = least x y
-        (Right y, Left x)  = least x y
+        (Left x , Left _)  -> x
+        (Right y, Right _) -> y
+        (Left x , Right y) -> least x y
+        (Right y, Left x)  -> least x y
     where
     least (t,x) (t',x') | t <= t'   = (t,x)
                         | otherwise = (t',x') 
