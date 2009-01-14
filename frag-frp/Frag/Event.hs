@@ -1,98 +1,81 @@
 module Frag.Event 
     ( Event
-    , Dispatcher, newDispatcher, newEventTrigger, waitEvent
+    , merge, never, withTime, filterMap, filter
+    -- Legacy adapters
+    , newEventSink, waitEvent
     )
 where
 
-import Data.Unique
-import GHC.Prim (Any)
-import Unsafe.Coerce (unsafeCoerce)
-import Control.Monad (MonadPlus(..), ap)
-import Control.Applicative
-import qualified Data.Map as Map
-import Control.Concurrent.Chan
+import Prelude hiding (filter)
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TVar
+import Data.Time.Clock
+import Control.Arrow (second)
 import Data.Monoid (Monoid(..))
 
-newtype PrimMap a = PrimMap (Map.Map Unique (Any -> a))
+newtype Time = Time UTCTime
+    deriving (Eq, Ord)
 
-instance Functor PrimMap where
-    fmap f (PrimMap m) = PrimMap ((fmap.fmap) f m)
-
--- | @Event a@ is conceptually an event that can occur.
---
--- Semantics: @Event a = Time -> (Time,a)@; where the
--- returned time is no less than the argument.  Intuitively,
--- \"wait some amount of time and yield a value\".
---
--- Functor, Monad, Applicative are all the same as State.
-data Event a
-    = Return a
-    | Wait [PrimMap (Event a)]
+newtype Event a = Event { runEvent :: UTCTime -> STM (UTCTime, a) }
 
 instance Functor Event where
-    fmap f (Return x) = Return (f x)
-    fmap f (Wait cs)  = Wait ((fmap.fmap.fmap) f cs)
+    fmap f (Event e) = Event ((fmap.fmap.second) f e)
 
-instance Monad Event where
-    return = Return
-    
-    Return x >>= f = f x
-    Wait cs >>= f = Wait ((fmap.fmap) (>>= f) cs)
+merge :: Event a -> Event a
+merge e e' = Event $ \t -> do
+    let e1 = fmap Left (runEvent e t)
+        e2 = fmap Right (runEvent e' t)
+    r <- liftM2 (,) (e1 `orElse` e2) (e2 `orElse` e1)
+    return $ case r of
+        (Left x , Left _)  = x
+        (Right y, Right _) = y
+        (Left x , Right y) = least x y
+        (Right y, Left x)  = least x y
+    where
+    least (t,x) (t',x') | t <= t'   = (t,x)
+                        | otherwise = (t',x') 
 
-instance Applicative Event where
-    pure = return
-    (<*>) = ap
-
--- | An event that never occurs. 
---
--- Semantics: @never t = (infinity, undefined)@
 never :: Event a
-never = Wait []
+never = Event . const $ retry
 
--- | The first of two events to occur.
---
--- Semantics: 
---
--- > firstOf e e' t0 = minBy (comparing fst) (e t0) (e' t0)
--- >     where
--- >     minBy f x y = case f x y of
--- >                       LT -> x
--- >                       EQ -> x
--- >                       GT -> y
-
-firstOf :: Event a -> Event a -> Event a
-firstOf (Return x) _ = Return x
-firstOf _ (Return x) = Return x
-firstOf (Wait m) (Wait m') = Wait (m ++ m')
-    
-
--- Event is not an instance of MonadPlus, because
--- mplus does not distribute over >>=.
 instance Monoid (Event a) where
     mempty = never
-    mappend = firstOf
+    mappend = merge
 
 
-newtype Dispatcher = Dispatcher (Chan (Unique, Any))
+withTime :: Event a -> Event (Time,a)
+withTime (Event e) = Event ((fmap.fmap) mod e)
+    where
+    mod (t,x) = (t,(Time t,x))
 
-newDispatcher :: IO Dispatcher
-newDispatcher = Dispatcher <$> newChan
+filterMap :: (a -> Maybe b) -> Event a -> Event b
+filterMap p e = Event $ \t -> do
+    (t',x) <- runEvent e t
+    case p x of
+        Nothing -> retry
+        Just y -> return (t',y)
 
-newEventTrigger :: Dispatcher -> IO (Event a, a -> IO ())
-newEventTrigger (Dispatcher chan) = do
-    ident <- newUnique
-    let event   = Wait [PrimMap $ Map.singleton ident (Return . unsafeCoerce)]
-        trigger x = writeChan chan (ident, unsafeCoerce x)
-    return (event, trigger)
+filter :: (a -> Bool) -> Event a -> Event a
+filter p = filterMap (\x -> if p x then Just x else Nothing)
 
-evolvePrim :: Unique -> Any -> PrimMap (Event a) -> Event a
-evolvePrim ident val (PrimMap m) = 
-    case Map.lookup ident m of
-        Nothing -> Wait [PrimMap m]
-        Just cc -> cc val
 
-waitEvent :: Dispatcher -> Event a -> IO a
-waitEvent _ (Return x) = return x
-waitEvent (Dispatcher chan) (Wait cs) = do
-    (ident, val) <- readChan chan
-    waitEvent (Dispatcher chan) . foldr1 firstOf . map (evolvePrim ident val) $ cs
+
+negativeInfinity = UTCTime (ModifiedJulianDay 0) (fromIntegral 0)
+
+newEventSink :: IO (Event a, a -> IO ())
+newEventSink = do
+    var <- atomically $ newTVar (negativeInfinity, error "this never happened")
+    let event = Event $ \t -> do
+            (t', x) <- readTVar var
+            if t' < t then retry else return (t', x)
+        sink val = do
+            t <- getCurrentTime
+            atomically $ writeTVar var (t,val)
+    
+    return (event, sink)
+
+waitEvent :: Event a -> IO a
+waitEvent e = do
+    now <- getCurrentTime
+    (t,x) <- atomically $ runEvent e now
+    return x
