@@ -17,6 +17,8 @@ import Data.Monoid (Monoid(..))
 import Control.Monad.Reader
 import Control.Concurrent
 import System.IO.Unsafe (unsafePerformIO)
+import Control.Monad (ap)
+import Control.Applicative
 
 import Frag.Time
 
@@ -97,6 +99,11 @@ type Sink a = a -> IO ()
 -- | > EventBuilder r a = WriterT (Event r) (State Time) a
 --                      = Time -> (Time, Event r, a)
 newtype EventBuilder r a = EventBuilder { runEventBuilder :: ReaderT (Sink r) IO a }
+    deriving (Functor,Monad)
+
+instance Applicative (EventBuilder r) where
+    pure = return
+    (<*>) = ap
 
 -- | > wait e t = (t', never, x)
 --   >     where (t',x) = least occurrence of e after t

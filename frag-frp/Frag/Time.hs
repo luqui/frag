@@ -10,6 +10,8 @@ where
 
 import Data.Time.Clock
 import System.IO.Unsafe (unsafePerformIO)
+import Control.Monad (ap)
+import Control.Applicative
 
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
@@ -28,6 +30,10 @@ negativeInfinity = Time $ addUTCTime (realToFrac (-1/0::Double)) (unsafePerformI
 -- | > TimeFun a = Time -> a
 newtype TimeFun a = TimeFun { runTimeFun :: IO a }
     deriving (Functor, Monad)
+
+instance Applicative TimeFun where
+    pure = return
+    (<*>) = ap
 
 -- | > time = id
 time :: TimeFun Time
