@@ -19,6 +19,7 @@ import Control.Concurrent
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad (ap)
 import Control.Applicative
+import System.Mem.Weak
 
 import Frag.Time
 
@@ -131,10 +132,23 @@ fire v = EventBuilder $ do
 
 -- | > buildEvent b t = let (_, e, _) = b t in e
 buildEvent :: EventBuilder r () -> TimeFun (Event r)
-buildEvent builder = unsafeIOToTimeFun $ do
-    (event, sink) <- newEventSink
+buildEvent builder = unsafeIOToTimeFun $ mdo
+    var <- atomically $ newTVar (negativeInfinity, error "this never happened")
+    wvar <- mkWeakPtr var (Just (killThread threadid))
+    let event = Event $ \t -> do
+            (t', x) <- readTVar var
+            if t' <= t then retry else return (t',x)
+        sink val = do
+            var' <- deRefWeak wvar
+            case var' of
+                Nothing -> return ()
+                Just v -> do
+                    t <- runTimeFun time
+                    atomically $ writeTVar v (t,val)
+    threadid <- forkIO $ runReaderT (runEventBuilder builder) sink
     forkIO $ runReaderT (runEventBuilder builder) sink
     return event
+
 
 newEventSink :: IO (Event a, a -> IO ())
 newEventSink = do
