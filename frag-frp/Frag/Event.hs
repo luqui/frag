@@ -1,8 +1,10 @@
 module Frag.Event 
     ( Event
-    , merge, never, withTime, filterMap, filter
-    -- Legacy adapters
-    , newEventSink, waitEvent
+    , merge, never, withTime, filterMap, filter, once
+    , EventBuilder, wait, currentTime, fire
+    
+    -- legacy adapters
+    , Sink, buildEvent, newEventSink, waitEvent
     )
 where
 
@@ -13,7 +15,9 @@ import Data.Time.Clock
 import Data.Time.Calendar
 import Control.Arrow (second)
 import Data.Monoid (Monoid(..))
-import Control.Monad (liftM2)
+import Control.Monad.Reader
+import Control.Concurrent
+import System.IO.Unsafe (unsafePerformIO)
 
 newtype Time = Time UTCTime
     deriving (Eq, Ord)
@@ -60,7 +64,48 @@ filterMap p e = Event $ \t -> do
 filter :: (a -> Bool) -> Event a -> Event a
 filter p = filterMap (\x -> if p x then Just x else Nothing)
 
+unsafeStepFun :: UTCTime -> TVar Bool
+{-# NOINLINE unsafeStepFun #-}
+unsafeStepFun t = unsafePerformIO $ do
+    now <- getCurrentTime
+    if t < now
+        then newTVarIO True
+        else do
+            var <- newTVarIO False
+            forkIO $ do
+                threadDelay . ceiling . (1000000*) . realToFrac $ diffUTCTime t now
+                atomically $ writeTVar var True
+            return var
 
+once :: Time -> a -> Event a
+once (Time t) x = Event $ \t' -> do
+    if t < t' then retry else do
+        let var = unsafeStepFun t
+        v <- readTVar var
+        unless v retry
+        return (t, x)
+
+type Sink a = a -> IO ()
+
+newtype EventBuilder r a = EventBuilder { runEventBuilder :: ReaderT (Sink r) IO a }
+
+wait :: Event a -> EventBuilder r a
+wait e = EventBuilder . lift . waitEvent $ e
+
+currentTime :: EventBuilder r Time
+currentTime = EventBuilder . lift . fmap Time $ getCurrentTime
+    
+fire :: r -> EventBuilder r ()
+fire v = EventBuilder $ do
+    sink <- ask
+    lift $ sink v
+
+
+buildEvent :: EventBuilder r () -> IO (Event r)
+buildEvent builder = do
+    (event, sink) <- newEventSink
+    forkIO $ runReaderT (runEventBuilder builder) sink
+    return event
 
 negativeInfinity = UTCTime (ModifiedJulianDay 0) (fromIntegral 0)
 
