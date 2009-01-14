@@ -105,7 +105,7 @@ type Sink a = a -> IO ()
 newtype EventBuilder r a = EventBuilder { runEventBuilder :: ReaderT (Sink r) IO a }
 
 -- | > wait e t = (t', never, x)
---   >     where (t',x) = least occurrence of e >= t
+--   >     where (t',x) = least occurrence of e after t
 wait :: Event a -> EventBuilder r a
 wait e = EventBuilder . lift . waitEvent $ e
 
@@ -132,7 +132,7 @@ newEventSink = do
     var <- atomically $ newTVar (negativeInfinity, error "this never happened")
     let event = Event $ \t -> do
             (t', x) <- readTVar var
-            if t' < t then retry else return (t', x)
+            if t' <= t then retry else return (t', x)
         sink val = do
             t <- getCurrentTime
             atomically $ writeTVar var (t,val)
