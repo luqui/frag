@@ -2,9 +2,10 @@ module Frag.Event
     ( Event
     , merge, never, withTime, filterMap, filter, once
     , EventBuilder, wait, currentTime, fire
+    , buildEvent
     
     -- legacy adapters
-    , Sink, buildEvent, newEventSink, waitEvent
+    , Sink, newEventSink, waitEvent
     )
 where
 
@@ -112,8 +113,9 @@ fire v = EventBuilder $ do
     sink <- ask
     lift $ sink v
 
-buildEvent :: EventBuilder r () -> IO (Event r)
-buildEvent builder = do
+-- | > buildEvent b t = let (_, e, _) = b t in e
+buildEvent :: EventBuilder r () -> TimeFun (Event r)
+buildEvent builder = unsafeIOToTimeFun $ do
     (event, sink) <- newEventSink
     forkIO $ runReaderT (runEventBuilder builder) sink
     return event
