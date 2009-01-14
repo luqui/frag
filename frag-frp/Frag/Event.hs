@@ -30,12 +30,14 @@ diffTime :: Time -> Time -> Double
 diffTime (Time t) (Time t') = realToFrac (diffUTCTime t t')
 
 -- | > Event a = Set (Time, a)
+-- @(never, merge)@ forms a Monoid on @Event a@.
 newtype Event a = Event { runEvent :: UTCTime -> STM (UTCTime, a) }
 
 instance Functor Event where
     fmap f (Event e) = Event ((fmap.fmap.second) f e)
 
 -- | > merge = union -- (where union is left-biased)
+-- @mappend@ on the Monoid instance
 merge :: Event a -> Event a -> Event a
 merge e e' = Event $ \t -> do
     let e1 = fmap Left (runEvent e t)
@@ -51,6 +53,7 @@ merge e e' = Event $ \t -> do
                         | otherwise = (t',x') 
 
 -- | > never = {}
+-- @mempty@ on the Monoid instance.
 never :: Event a
 never = Event . const $ retry
 
