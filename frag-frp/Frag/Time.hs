@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Frag.Time 
     ( Time, shiftTime, diffTime
     , negativeInfinity

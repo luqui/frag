@@ -1,7 +1,9 @@
+{-# LANGUAGE RecursiveDo, GeneralizedNewtypeDeriving #-}
+
 module Frag.Event 
     ( Event
     , merge, mergeWith, never, withTime, filterMap, filter, once
-    , EventBuilder, wait, liftTime, fire
+    , EventBuilder, wait, delay, liftTime, fire
     , buildEvent
     
     -- legacy adapters
@@ -121,6 +123,10 @@ liftTime = EventBuilder . lift . runTimeFun
 wait :: Event a -> EventBuilder r a
 wait e = EventBuilder . lift . waitEvent $ e
 
+-- | > delay dt t = (t+dt, never, ())
+delay :: Double -> EventBuilder r ()
+delay t = EventBuilder . lift . threadDelay . ceiling $ 1000000*t
+
 -- | > fire x t = (t, once t x, ())
 -- (currently this does not respect the semantics, in that multiple events
 -- fired at the same time will take the last one, rather than the first
@@ -130,7 +136,9 @@ fire v = EventBuilder $ do
     sink <- ask
     lift $ sink v
 
--- | > buildEvent b t = let (_, e, _) = b t in e
+-- 'Thread blocked indefinitely' in reasonable situations with this impl.
+-- I wonder what's going on.
+{-
 buildEvent :: EventBuilder r () -> TimeFun (Event r)
 buildEvent builder = unsafeIOToTimeFun $ mdo
     var <- atomically $ newTVar (negativeInfinity, error "this never happened")
@@ -146,6 +154,14 @@ buildEvent builder = unsafeIOToTimeFun $ mdo
                     t <- runTimeFun time
                     atomically $ writeTVar v (t,val)
     threadid <- forkIO $ runReaderT (runEventBuilder builder) sink
+    forkIO $ runReaderT (runEventBuilder builder) sink
+    return event
+-}
+
+-- | > buildEvent b t = let (_, e, _) = b t in e
+buildEvent :: EventBuilder r () -> TimeFun (Event r)
+buildEvent builder = unsafeIOToTimeFun $ do
+    (event, sink) <- newEventSink
     forkIO $ runReaderT (runEventBuilder builder) sink
     return event
 
